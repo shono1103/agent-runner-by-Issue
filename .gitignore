@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+._*
+
+# Node
+node_modules/
+dist/
+*.log
+.env
+.env.local
+
+# エディタ
+.vscode/
+.idea/
+
+# 一時ファイル
+*.swp
+*.bak
+*~

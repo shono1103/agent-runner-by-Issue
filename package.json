@@ -1,0 +1,19 @@
+{
+  "name": "agent-runner-by-issue",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "dev:webhook": "pnpm --filter webhook run dev",
+    "dev:userscript": "pnpm --filter userscript run dev",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r run typecheck",
+    "check": "pnpm run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
