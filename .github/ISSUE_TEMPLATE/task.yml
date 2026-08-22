@@ -1,0 +1,33 @@
+name: タスク
+description: 要件定義 / システムアーキテクチャ定義 / テスト定義を書き、機械変換・PR自動生成の運用に乗せる
+title: "[Task] "
+labels:
+  - "type:task"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## このissueの使い方
+
+        1. まずこのissueを作成する (本文には概要のみで構いません)
+        2. userscript の「フォーマット作成」ボタンを押すと、webhook が以下の3つの
+           コメントをこのissueに新規投稿します。
+           - `## 要件定義`
+           - `## システムアーキテクチャ定義`
+           - `## テスト定義`
+
+           **このテンプレート自体は3コメントを自動投稿しません。** 上記はテンプレート
+           作成後、userscriptから起動する運用です。
+        3. 各コメントを編集して中身を書く
+        4. userscript の「Allium 生成 / LikeC4 生成 / Superpowers 生成 / すべて生成」
+           ボタンで、書いた内容を機械変換して推敲する
+        5. 納得がいったら「PR を作成」ボタンで実装のPRを自動生成する
+
+        詳細はリポジトリの README.md の「全体の流れ」を参照してください。
+  - type: textarea
+    id: overview
+    attributes:
+      label: 概要
+      description: このタスクで何をしたいか、簡単に記載してください (詳細な要件定義は後続のコメントで書きます)
+    validations:
+      required: false

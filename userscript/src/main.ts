@@ -1,3 +1,5 @@
+import { issueKind } from "./issue-kind.ts";
+import { readIssueLabels } from "./labels.ts";
 import { currentIssue, issueKey, type IssueLocation } from "./location.ts";
 import { buildPanel, type PanelHandle } from "./ui/panel.ts";
 
@@ -19,7 +21,9 @@ function mount(issue: IssueLocation): void {
   host.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483000;";
   const shadow = host.attachShadow({ mode: "open" });
 
-  const handle = buildPanel(issue);
+  // issueページDOMからlabelsを1度だけ読み取り、issueの種類を判定する。
+  const kind = issueKind(readIssueLabels());
+  const handle = buildPanel(issue, kind);
   shadow.append(handle.element);
   document.body.append(host);
 

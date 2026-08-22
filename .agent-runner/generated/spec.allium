@@ -1,0 +1,36 @@
+-- allium: 3
+
+-- issueの種類 (バグ報告 / 機能要望 / タスク) を、GitHub Issueに付与されたラベルから
+-- 機械的に判別できるようにする。issue本文の書き換えやコメント追加では失われない
+-- 目印として、ラベルを採用する。
+
+enum IssueKind { bug | feature | task }
+
+-- Issue および Label はGitHub側で管理される (external)
+external entity Issue {
+    labels: Label with issue = this
+
+    -- issueKind は built-in ではないブラックボックス関数。
+    -- 優先順位: type:bug > type:feature > type:task
+    -- 該当ラベルが無い場合 (テンプレート導入前の既存issue、未知ラベルのみの場合を含む)
+    -- は task をデフォルトとする (後方互換)
+    kind: issueKind(labels)
+
+    -- バグ報告テンプレートに由来する項目 (kind = bug のときのみ存在)
+    reproduction_steps: String when kind = bug   -- 再現手順
+    expected_behavior: String when kind = bug    -- 期待する動作
+    actual_behavior: String when kind = bug      -- 実際の動作
+
+    -- 機能要望テンプレートに由来する項目 (kind = feature のときのみ存在)
+    desired_outcome: String when kind = feature  -- 実現したいこと
+    background: String when kind = feature       -- 背景・目的
+
+    -- kind = task の場合、追加項目は無い。運用上、この後issueに
+    -- 要件定義 / システムアーキテクチャ定義 / テスト定義の3コメントが
+    -- 別途投稿される想定だが、テンプレート自体はそれを自動投稿しない。
+}
+
+external entity Label {
+    issue: Issue
+    name: String  -- 例: "type:bug" | "type:feature" | "type:task" | その他任意の既存ラベル
+}
