@@ -12,6 +12,21 @@ import { changedFiles, showFileAtHead, type GitWorkspace } from "./git.ts";
 const DENY_PREFIXES = [".github/workflows/", ".git/"];
 const DENY_EXACT_BASENAMES = [".npmrc", ".netrc"];
 const ALLOWLIST_HIDDEN_PREFIXES = [".agent-runner/"];
+const ALLOWLIST_HIDDEN_BASENAMES = [".env.example", ".env.test"];
+
+/** npm がパッケージ操作時に暗黙に実行するスクリプト名。新規追加であっても拒否する。 */
+const LIFECYCLE_SCRIPT_NAMES = new Set([
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepublishOnly",
+  "preversion",
+  "version",
+  "postversion",
+  "prepack",
+  "postpack",
+]);
 
 export type SafeDiffResult =
   | { ok: true }
@@ -32,7 +47,11 @@ export async function assertSafeDiff(ws: GitWorkspace): Promise<SafeDiffResult> 
       continue;
     }
     const isHidden = f.startsWith(".") || f.includes("/.");
-    if (isHidden && !ALLOWLIST_HIDDEN_PREFIXES.some((p) => f.startsWith(p))) {
+    if (
+      isHidden &&
+      !ALLOWLIST_HIDDEN_PREFIXES.some((p) => f.startsWith(p)) &&
+      !ALLOWLIST_HIDDEN_BASENAMES.includes(basename)
+    ) {
       offending.add(f);
       continue;
     }
@@ -65,12 +84,29 @@ async function scriptsFieldOffenders(ws: GitWorkspace, files: string[]): Promise
       const before = JSON.parse(beforeRaw) as { scripts?: Record<string, string> };
       const afterRaw = await readFile(join(ws.cloneDir, f), "utf8");
       const after = JSON.parse(afterRaw) as { scripts?: Record<string, string> };
-      const beforeScripts = JSON.stringify(before.scripts ?? {});
-      const afterScripts = JSON.stringify(after.scripts ?? {});
-      if (beforeScripts !== afterScripts) offenders.push(f);
+      if (hasUnsafeScriptsChange(before.scripts ?? {}, after.scripts ?? {})) {
+        offenders.push(f);
+      }
     } catch {
       // 壊れた JSON は別の問題として通常のレビューに委ね、ここではブロックしない。
     }
   }
   return offenders;
+}
+
+/**
+ * 既存スクリプトの値の変更・削除、またはライフサイクルフックの新規追加を「不正な変更」とみなす。
+ * それ以外の新規スクリプトキー追加 (例: "test") は許可する。
+ */
+function hasUnsafeScriptsChange(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): boolean {
+  for (const [key, value] of Object.entries(before)) {
+    if (after[key] !== value) return true;
+  }
+  for (const key of Object.keys(after)) {
+    if (!(key in before) && LIFECYCLE_SCRIPT_NAMES.has(key)) return true;
+  }
+  return false;
 }

@@ -11,6 +11,7 @@
     "dev:userscript": "pnpm --filter userscript run dev",
     "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r --if-present run test",
     "check": "pnpm run typecheck"
   },
   "devDependencies": {
