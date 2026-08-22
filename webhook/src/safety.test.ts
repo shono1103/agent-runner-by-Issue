@@ -1,48 +1,51 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { after as afterAll, test } from "node:test";
-import type { GitWorkspace } from "./git.ts";
 import { assertSafeDiff } from "./safety.ts";
+import { cleanupTestWorkspaces, makeGitWorkspace as makeWorkspace, writeFiles } from "./test-helpers/workspace.ts";
 
-const cleanupDirs: string[] = [];
-
-afterAll(async () => {
-  await Promise.all(cleanupDirs.map((d) => rm(d, { recursive: true, force: true })));
-});
-
-async function writeFiles(cloneDir: string, files: Record<string, string>): Promise<void> {
-  for (const [path, content] of Object.entries(files)) {
-    const full = join(cloneDir, path);
-    await mkdir(dirname(full), { recursive: true });
-    await writeFile(full, content, "utf8");
-  }
-}
-
-async function makeWorkspace(initialFiles: Record<string, string>): Promise<GitWorkspace> {
-  const runtimeDir = await mkdtemp(join(tmpdir(), "safety-test-"));
-  cleanupDirs.push(runtimeDir);
-  const cloneDir = join(runtimeDir, "repo");
-  await mkdir(cloneDir, { recursive: true });
-
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: cloneDir, stdio: "pipe" });
-  git("init", "-q");
-  git("config", "user.name", "test");
-  git("config", "user.email", "test@example.com");
-  await writeFiles(cloneDir, initialFiles);
-  git("add", "-A");
-  git("commit", "-q", "-m", "init");
-
-  return { runtimeDir, cloneDir, env: process.env };
-}
+afterAll(cleanupTestWorkspaces);
 
 const BASE_PACKAGE_JSON = JSON.stringify(
   { name: "x", scripts: { dev: "node dev.js", typecheck: "tsc" } },
   null,
   2,
 );
+
+test("assertSafeDiff: .github/ISSUE_TEMPLATE/ 配下の新規ファイルを許可する", async () => {
+  const ws = await makeWorkspace({ "README.md": "# x\n" });
+  await writeFiles(ws.cloneDir, {
+    ".github/ISSUE_TEMPLATE/bug_report.yml": "name: bug\n",
+  });
+
+  const result = await assertSafeDiff(ws);
+
+  assert.equal(result.ok, true);
+});
+
+test("assertSafeDiff: .github/ISSUE_TEMPLATE/ と .github/workflows/ が同時に新規追加された場合、workflows のみ拒否する", async () => {
+  const ws = await makeWorkspace({ "README.md": "# x\n" });
+  await writeFiles(ws.cloneDir, {
+    ".github/ISSUE_TEMPLATE/bug_report.yml": "name: bug\n",
+    ".github/workflows/ci.yml": "name: ci\n",
+  });
+
+  const result = await assertSafeDiff(ws);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.deepEqual(result.files, [".github/workflows/ci.yml"]);
+});
+
+test("assertSafeDiff: .github/ 直下の未知のファイルは引き続き拒否する", async () => {
+  const ws = await makeWorkspace({ "README.md": "# x\n" });
+  await writeFiles(ws.cloneDir, {
+    ".github/CODEOWNERS": "* @someone\n",
+  });
+
+  const result = await assertSafeDiff(ws);
+
+  assert.equal(result.ok, false);
+});
 
 test("assertSafeDiff: .env.example の変更のみを許可する", async () => {
   const ws = await makeWorkspace({ "webhook/.env.example": "PORT=1\n" });

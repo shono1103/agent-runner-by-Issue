@@ -87,9 +87,16 @@ export async function createBranch(ws: GitWorkspace, branch: string): Promise<vo
   assertOk(await execGit(["-C", ws.cloneDir, "switch", "-c", branch], ws.env), "switch -c");
 }
 
-/** git status --porcelain の変更ファイル一覧 (未ステージ・未追跡も含む)。 */
+/**
+ * git status --porcelain の変更ファイル一覧 (未ステージ・未追跡も含む)。
+ * --untracked-files=all を指定し、新規の未追跡ディレクトリを1エントリに丸めず
+ * 個々のファイルパスとして展開する (safety.ts がファイル単位で安全性を判定するため)。
+ */
 export async function changedFiles(ws: GitWorkspace): Promise<string[]> {
-  const result = await execGit(["-C", ws.cloneDir, "status", "--porcelain=v1"], ws.env);
+  const result = await execGit(
+    ["-C", ws.cloneDir, "status", "--porcelain=v1", "--untracked-files=all"],
+    ws.env,
+  );
   return result.stdout
     .split("\n")
     .map((line) => line.trimEnd())
