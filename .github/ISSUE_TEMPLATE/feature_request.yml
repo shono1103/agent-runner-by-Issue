@@ -1,0 +1,20 @@
+name: 機能要望
+description: 新しい機能や既存機能の改善を提案する
+title: "[Feature] "
+labels:
+  - "type:feature"
+body:
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: 実現したいこと
+      description: どのような機能・振る舞いを実現したいかを記載してください
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景・目的
+      description: なぜそれが必要なのか、どのような課題を解決したいのかを記載してください
+    validations:
+      required: true

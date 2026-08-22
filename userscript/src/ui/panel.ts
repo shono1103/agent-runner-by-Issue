@@ -8,6 +8,7 @@ import {
   postScaffold,
   type JobLaunchResult,
 } from "../gm-client.ts";
+import type { IssueKind } from "../issue-kind.ts";
 import type { IssueLocation } from "../location.ts";
 import { isConfigured, loadSettings } from "../settings.ts";
 import { renderSettingsView } from "./settings-dialog.ts";
@@ -24,6 +25,13 @@ const TARGET_LABELS: Record<ConvertTarget, string> = {
   superpowers: "Superpowers 生成",
 };
 
+// bug / feature 用のボタンはそれぞれ #3 / #4 のスコープで実装する。
+// 本issue (#2) の時点ではプレースホルダーの説明文のみを表示する。
+const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task">, string> = {
+  bug: "調査 (準備中: #3 で実装予定)",
+  feature: "質問 (準備中: #4 で実装予定)",
+};
+
 function mkButton(label: string, className: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
@@ -38,7 +46,7 @@ function describeError(e: unknown): string {
   return String(e);
 }
 
-export function buildPanel(issue: IssueLocation): PanelHandle {
+export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
   let activeController: AbortController | null = null;
 
   const style = document.createElement("style");
@@ -90,34 +98,7 @@ export function buildPanel(issue: IssueLocation): PanelHandle {
   const log = document.createElement("div");
   log.className = "log";
 
-  const scaffoldRow = document.createElement("div");
-  scaffoldRow.className = "row";
-  const scaffoldBtn = mkButton("フォーマット作成", "action");
-  scaffoldRow.append(scaffoldBtn);
-
-  const convertLabel = document.createElement("div");
-  convertLabel.className = "section-label";
-  convertLabel.textContent = "変換";
-  const convertRow = document.createElement("div");
-  convertRow.className = "row";
-  const alliumBtn = mkButton(TARGET_LABELS.allium, "action");
-  const likec4Btn = mkButton(TARGET_LABELS.likec4, "action");
-  const superpowersBtn = mkButton(TARGET_LABELS.superpowers, "action");
-  const allBtn = mkButton("すべて生成", "action");
-  convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn);
-
-  const prLabel = document.createElement("div");
-  prLabel.className = "section-label";
-  prLabel.textContent = "実装";
-  const prRow = document.createElement("div");
-  prRow.className = "row";
-  const prBtn = mkButton("PR を作成", "action danger");
-  prRow.append(prBtn);
-
-  body.append(scaffoldRow, convertLabel, convertRow, prLabel, prRow, status, log);
-  panel.append(header, body);
-
-  const allButtons = [scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn];
+  const allButtons: HTMLButtonElement[] = [];
   const setBusy = (busy: boolean) => {
     for (const b of allButtons) b.disabled = busy;
   };
@@ -133,7 +114,10 @@ export function buildPanel(issue: IssueLocation): PanelHandle {
     status.textContent = text;
   };
 
-  async function withJob(kind: string, launch: () => Promise<JobLaunchResult>): Promise<void> {
+  async function withJob(
+    jobLabel: string,
+    launch: () => Promise<JobLaunchResult>,
+  ): Promise<void> {
     if (!isConfigured(loadSettings())) {
       setStatus("先に ⚙ から webhook URL とトークンを設定してください");
       return;
@@ -143,28 +127,28 @@ export function buildPanel(issue: IssueLocation): PanelHandle {
     activeController = controller;
 
     setBusy(true);
-    setStatus(`${kind}: 開始しています...`);
+    setStatus(`${jobLabel}: 開始しています...`);
     try {
       const launched = await launch();
       if (!launched.started) {
-        appendLog(`${kind}: ${launched.message} (既存ジョブに合流: jobId=${launched.jobId})`);
+        appendLog(`${jobLabel}: ${launched.message} (既存ジョブに合流: jobId=${launched.jobId})`);
       } else {
-        appendLog(`${kind}: 開始 (jobId=${launched.jobId})`);
+        appendLog(`${jobLabel}: 開始 (jobId=${launched.jobId})`);
       }
 
-      const totalTimeoutMs = kind === "PR 作成" ? 40 * 60_000 : 5 * 60_000;
+      const totalTimeoutMs = jobLabel === "PR 作成" ? 40 * 60_000 : 5 * 60_000;
       const result = await pollJob(launched.jobId, {
         signal: controller.signal,
         totalTimeoutMs,
         onUpdate: (s) => {
-          setStatus(`${kind}: ${s.phase} (費用 $${s.costUsd.toFixed(3)})`);
+          setStatus(`${jobLabel}: ${s.phase} (費用 $${s.costUsd.toFixed(3)})`);
         },
       });
 
       for (const line of result.logs) appendLog(line);
 
       if (result.status === "succeeded") {
-        setStatus(`${kind}: 完了`);
+        setStatus(`${jobLabel}: 完了`);
         dot.className = "dot ok";
         if (
           result.result &&
@@ -174,69 +158,107 @@ export function buildPanel(issue: IssueLocation): PanelHandle {
         ) {
           appendLog(`PR: ${(result.result as { prUrl: string }).prUrl}`);
         }
-        if (kind !== "PR 作成") {
+        if (jobLabel !== "PR 作成") {
           setTimeout(() => location.reload(), 1200);
         }
       } else {
-        setStatus(`${kind}: 失敗 (${result.error ?? "unknown error"})`);
+        setStatus(`${jobLabel}: 失敗 (${result.error ?? "unknown error"})`);
         dot.className = "dot error";
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
-        setStatus(`${kind}: 中断しました`);
+        setStatus(`${jobLabel}: 中断しました`);
         return;
       }
-      setStatus(`${kind}: ${describeError(e)}`);
+      setStatus(`${jobLabel}: ${describeError(e)}`);
       dot.className = "dot error";
     } finally {
       setBusy(false);
     }
   }
 
-  scaffoldBtn.addEventListener("click", () => {
-    void (async () => {
-      if (!isConfigured(loadSettings())) {
-        setStatus("先に ⚙ から webhook URL とトークンを設定してください");
-        return;
-      }
-      setBusy(true);
-      setStatus("フォーマット作成中...");
-      try {
-        const res = await postScaffold(issue);
-        setStatus(
-          `作成: ${res.created.join(", ") || "なし"} / 既存: ${res.skipped.join(", ") || "なし"}`,
-        );
-        if (res.created.length > 0) setTimeout(() => location.reload(), 1000);
-      } catch (e) {
-        setStatus(describeError(e));
-      } finally {
-        setBusy(false);
-      }
-    })();
-  });
+  if (kind === "task") {
+    // タスク種別: 既存の「フォーマット作成 / 変換 / PR作成」一式を表示する。
+    const scaffoldRow = document.createElement("div");
+    scaffoldRow.className = "row";
+    const scaffoldBtn = mkButton("フォーマット作成", "action");
+    scaffoldRow.append(scaffoldBtn);
 
-  alliumBtn.addEventListener("click", () => {
-    void withJob("Allium 変換", () => postConvert({ ...issue, targets: ["allium"] }));
-  });
-  likec4Btn.addEventListener("click", () => {
-    void withJob("LikeC4 変換", () => postConvert({ ...issue, targets: ["likec4"] }));
-  });
-  superpowersBtn.addEventListener("click", () => {
-    void withJob("Superpowers 変換", () => postConvert({ ...issue, targets: ["superpowers"] }));
-  });
-  allBtn.addEventListener("click", () => {
-    void withJob("全形式変換", () =>
-      postConvert({ ...issue, targets: ["allium", "likec4", "superpowers"] }),
-    );
-  });
+    const convertLabel = document.createElement("div");
+    convertLabel.className = "section-label";
+    convertLabel.textContent = "変換";
+    const convertRow = document.createElement("div");
+    convertRow.className = "row";
+    const alliumBtn = mkButton(TARGET_LABELS.allium, "action");
+    const likec4Btn = mkButton(TARGET_LABELS.likec4, "action");
+    const superpowersBtn = mkButton(TARGET_LABELS.superpowers, "action");
+    const allBtn = mkButton("すべて生成", "action");
+    convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn);
 
-  prBtn.addEventListener("click", () => {
-    const ok = window.confirm(
-      `Issue #${issue.issueNumber} の内容から PR を作成します。よろしいですか?`,
-    );
-    if (!ok) return;
-    void withJob("PR 作成", () => postCreatePr(issue));
-  });
+    const prLabel = document.createElement("div");
+    prLabel.className = "section-label";
+    prLabel.textContent = "実装";
+    const prRow = document.createElement("div");
+    prRow.className = "row";
+    const prBtn = mkButton("PR を作成", "action danger");
+    prRow.append(prBtn);
+
+    body.append(scaffoldRow, convertLabel, convertRow, prLabel, prRow, status, log);
+    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn);
+
+    scaffoldBtn.addEventListener("click", () => {
+      void (async () => {
+        if (!isConfigured(loadSettings())) {
+          setStatus("先に ⚙ から webhook URL とトークンを設定してください");
+          return;
+        }
+        setBusy(true);
+        setStatus("フォーマット作成中...");
+        try {
+          const res = await postScaffold(issue);
+          setStatus(
+            `作成: ${res.created.join(", ") || "なし"} / 既存: ${res.skipped.join(", ") || "なし"}`,
+          );
+          if (res.created.length > 0) setTimeout(() => location.reload(), 1000);
+        } catch (e) {
+          setStatus(describeError(e));
+        } finally {
+          setBusy(false);
+        }
+      })();
+    });
+
+    alliumBtn.addEventListener("click", () => {
+      void withJob("Allium 変換", () => postConvert({ ...issue, targets: ["allium"] }));
+    });
+    likec4Btn.addEventListener("click", () => {
+      void withJob("LikeC4 変換", () => postConvert({ ...issue, targets: ["likec4"] }));
+    });
+    superpowersBtn.addEventListener("click", () => {
+      void withJob("Superpowers 変換", () => postConvert({ ...issue, targets: ["superpowers"] }));
+    });
+    allBtn.addEventListener("click", () => {
+      void withJob("全形式変換", () =>
+        postConvert({ ...issue, targets: ["allium", "likec4", "superpowers"] }),
+      );
+    });
+
+    prBtn.addEventListener("click", () => {
+      const ok = window.confirm(
+        `Issue #${issue.issueNumber} の内容から PR を作成します。よろしいですか?`,
+      );
+      if (!ok) return;
+      void withJob("PR 作成", () => postCreatePr(issue));
+    });
+  } else {
+    // bug / feature 種別: 対応する機能 (#3 / #4) 実装までのプレースホルダー表示。
+    const placeholderLabel = document.createElement("div");
+    placeholderLabel.className = "section-label";
+    placeholderLabel.textContent = PLACEHOLDER_TEXT[kind];
+    body.append(placeholderLabel, status, log);
+  }
+
+  panel.append(header, body);
 
   let collapsed = false;
   header.addEventListener("click", (e) => {

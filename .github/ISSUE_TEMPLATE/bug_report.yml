@@ -1,0 +1,31 @@
+name: バグ報告
+description: 既存の機能が期待通りに動作しない場合に報告する
+title: "[Bug] "
+labels:
+  - "type:bug"
+body:
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: 再現手順
+      description: バグを再現するための具体的な手順を記載してください
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: 期待する動作
+      description: 本来どのような動作になるべきかを記載してください
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: 実際の動作
+      description: 実際に発生した動作 (エラーメッセージ・ログなどがあれば併記してください)
+    validations:
+      required: true

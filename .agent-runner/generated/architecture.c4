@@ -1,0 +1,90 @@
+specification {
+  element system
+  element container
+  element component
+}
+
+model {
+  github = system 'GitHub' {
+    description 'Issue Forms とIssueページ (ラベル表示含む) を提供するプラットフォーム'
+
+    issueTemplates = container 'Issue Templates' {
+      description '.github/ISSUE_TEMPLATE 配下のIssue Forms定義。labels: フィールドで固定ラベルを自動付与する'
+
+      bugReportTemplate = component 'bug_report.yml' {
+        description 'バグ報告用テンプレート。作成時にラベル type:bug を自動付与'
+      }
+      featureRequestTemplate = component 'feature_request.yml' {
+        description '機能要望用テンプレート。作成時にラベル type:feature を自動付与'
+      }
+      taskTemplate = component 'task.yml' {
+        description 'タスク用テンプレート。作成時にラベル type:task を自動付与'
+      }
+      config = component 'config.yml' {
+        description 'blank_issues_enabled: false を設定し、テンプレート経由の作成を必須にする'
+      }
+    }
+
+    issuePage = container 'Issue ページ' {
+      description 'サイドバーのLabelsセクションに type:bug / type:feature / type:task が表示される'
+    }
+  }
+
+  githubApi = system 'GitHub API' {
+    description 'issueのlabelsフィールドをAPI経由でも提供する'
+  }
+
+  userscript = system 'userscript' {
+    description 'issueページ上でパネルを表示し、種類に応じたボタンを出し分ける拡張スクリプト'
+
+    main = component 'main.ts' {
+      description 'mount() 内でissueページDOMからlabelsを1度だけ読み取る'
+    }
+    issueKind = component 'issue-kind.ts' {
+      description 'issueKind(labels: string[]): "bug"|"feature"|"task" を判定。type:bug/type:feature双方あればtype:bug優先、どちらも無ければtask (後方互換デフォルト)'
+    }
+    panel = component 'ui/panel.ts' {
+      description 'buildPanel() が種類に応じて表示ボタンを切り替える。task→フォーマット作成/Allium生成/LikeC4生成/Superpowers生成/すべて生成/PRを作成。bug→調査ボタン(プレースホルダー、#3で実装)。feature→質問ボタン(プレースホルダー、#4で実装)'
+    }
+
+    main -> issueKind 'labels配列を渡して種類判定'
+    main -> panel 'issueKindの結果 (bug/feature/task) を渡す'
+  }
+
+  webhook = system 'webhook' {
+    description '本issueのスコープでは変更なし。#3・#4実装時にGitHub APIからlabelsを読み取り種類分岐する際、同じラベル名を参照する前提'
+
+    markers = component 'markers.ts' {
+      description '既存のコメント種別マーカー機能。ラベルによる種類判別とは別レイヤーの関心事'
+    }
+  }
+
+  userscript.main -> github.issuePage 'issueページDOMのLabelsセクションを読み取る'
+  github.issueTemplates -> githubApi 'テンプレート経由のissue作成時にlabels:フィールドでラベルを自動付与'
+  webhook.markers -> githubApi 'labelsフィールドを読み取り種類に応じた処理を分岐 (#3・#4で実装予定)'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of github {
+    title 'GitHub側: Issue Formsとラベル付与'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript内部: 種類判定とパネル切り替え'
+    include *
+  }
+
+  dynamic view issueKindFlow {
+    title '種類判定からパネル表示までの流れ'
+    userscript.main -> github.issuePage 'issueページDOMからlabelsを取得'
+    userscript.main -> userscript.issueKind 'labels配列を渡す'
+    userscript.issueKind -> userscript.main '"bug" | "feature" | "task" を返す (両方あればbug優先、無指定はtask)'
+    userscript.main -> userscript.panel '判定結果を渡し、種類に応じたボタンを表示させる'
+  }
+}
