@@ -1,40 +1,21 @@
 ## システムアーキテクチャ定義
 
-### 配置
+### 方針
 
-- `.github/ISSUE_TEMPLATE/bug_report.yml`
-- `.github/ISSUE_TEMPLATE/feature_request.yml`
-- `.github/ISSUE_TEMPLATE/task.yml`
-- `.github/ISSUE_TEMPLATE/config.yml` (`blank_issues_enabled: false` にしてテンプレート経由の作成を必須にする)
+既存の `userscript/src/main.ts` の `sync()` は300msポーリング + `MutationObserver` + turbo系イベントで「今マウントすべきか/どのissueを対象にすべきか」を判定している。この仕組みに「重なり表示中かどうか」の判定を1つ追加するだけで対応する。新しい監視機構は追加しない。
 
-GitHubのIssue Forms (`.yml` 形式) を採用する。Markdownテンプレートではなく Issue Forms を選ぶ理由は、`labels:` フィールドでissue作成時に固定ラベルを自動付与でき、これを種類判別の目印として使えるため。
+### 追加・変更するファイル
 
-### 種類判別の目印
+- `userscript/src/location.ts`
+  - `isSubIssueOverlayOpen(): boolean` を追加する
+  - 判定方法は実装着手時にGitHubの実際のDOMを調査して確定する。有力な候補は、GitHubの他のオーバーレイ機能 (差分プレビュー等) と同様に `role="dialog"` またはSub-issue専用の `data-*` 属性を持つ要素の有無を見る方法。調査結果に応じてこの関数の中身だけを差し替えられるよう、判定ロジックはこの関数1箇所に閉じ込める
+  - 誤検知防止のため、GitHubの他の機能 (ラベル編集ドロップダウン等の別のdialog/popover) と混同しない、Sub-issue表示に特有のセレクタを使うこと
+- `userscript/src/main.ts`
+  - `sync()` の冒頭、`currentIssue()` の判定より前に `isSubIssueOverlayOpen()` をチェックする
+  - `true` の場合は即座に `unmount()` を呼んで `return` する (通常のissue判定・マウント処理は行わない)
+  - `false` の場合は既存の `sync()` のロジックをそのまま実行する
 
-各テンプレートに以下の固定ラベルを自動付与する。
+### 影響範囲
 
-- バグ報告用テンプレート → ラベル `type:bug`
-- 機能要望用テンプレート → ラベル `type:feature`
-- タスク用テンプレート → ラベル `type:task`
-
-ラベルを目印に選ぶ理由:
-
-- issue本文やコメントの書き換えでは失われない (issue自体の属性である)
-- GitHub UI・API (`labels` フィールド) の両方から取得でき、userscript・webhook のどちらからも参照しやすい
-- `webhook/src/markers.ts` が担う「コメント種別のマーカー」とは別レイヤーの関心事であり、既存の仕組みと衝突しない
-
-### userscript側の変更
-
-- 種類判別ロジックを新設する (`userscript/src/issue-kind.ts` 等)
-  - `issueKind(labels: string[]): "bug" | "feature" | "task"` — labels配列から `type:bug` / `type:feature` を検出し、どちらも無ければ `"task"` を返す (既存issueとの後方互換のデフォルト)
-  - 両方のラベルが同時に付与されている異常系では、`type:bug` を優先する (バグ報告の調査結果反映を優先させたいため) と定め、実装をこれに合わせる
-- labelsはGitHubのissueページDOM (サイドバーの Labels セクション) から取得する。`userscript/src/main.ts` の `mount()` 内で1度だけ読み取り、`issueKind` の結果を `ui/panel.ts` の `buildPanel()` に渡す
-- パネル (`userscript/src/ui/panel.ts`) は種類に応じて表示するボタンを切り替える
-  - `task` → 既存の「フォーマット作成 / Allium生成 / LikeC4生成 / Superpowers生成 / すべて生成 / PRを作成」
-  - `bug` → #3 で実装する調査ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-  - `feature` → #4 で実装する質問ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-
-### webhook側の変更
-
-- 本issueのスコープではwebhookのAPI・ジョブロジックへの変更はない (テンプレート追加とラベル付与はGitHub側の設定のみで完結するため)
-- #3・#4 の実装時、webhookのエンドポイントが対象issueの `labels` をGitHub APIから読み取り種類に応じた処理を分岐する際にも、同じラベル名 (`type:bug` / `type:feature` / `type:task`) を参照する前提とする
+- `unmount()` / `mount()` など既存の関数はそのまま流用し、新規に追加するのは検知関数と `sync()` 冒頭の分岐のみ
+- ジョブ実行中 (webhookへのポーリング等) の挙動には手を入れない。重なり表示中にパネルが消えても、既存の非同期処理自体は要件上とくに中断しない
