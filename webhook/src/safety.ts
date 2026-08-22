@@ -11,7 +11,7 @@ import { changedFiles, showFileAtHead, type GitWorkspace } from "./git.ts";
 
 const DENY_PREFIXES = [".github/workflows/", ".git/"];
 const DENY_EXACT_BASENAMES = [".npmrc", ".netrc"];
-const ALLOWLIST_HIDDEN_PREFIXES = [".agent-runner/"];
+const ALLOWLIST_HIDDEN_PREFIXES = [".agent-runner/", ".github/ISSUE_TEMPLATE/"];
 const ALLOWLIST_HIDDEN_BASENAMES = [".env.example", ".env.test"];
 
 /** npm がパッケージ操作時に暗黙に実行するスクリプト名。新規追加であっても拒否する。 */
