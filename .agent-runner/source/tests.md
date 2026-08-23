@@ -2,25 +2,14 @@
 
 ### 静的検証
 
-- `.github/ISSUE_TEMPLATE/*.yml` がGitHubのIssue Formsスキーマとして妥当であること (3種類がissue作成画面の選択肢に表示されることを手動確認する)
-- 各テンプレートの `labels:` に `type:bug` / `type:feature` / `type:task` がそれぞれ1つだけ設定されていること
+- `pnpm run typecheck` が通ること
+- 既存の単体テスト (`userscript/src/issue-kind.test.ts` など) が壊れていないこと
 
-### userscript: `issueKind` 関数の単体テスト
+### 手動確認 (E2E) — 再現手順ベース
 
-入力: labels配列 (文字列の配列)
-
-- `["type:bug"]` → `"bug"`
-- `["type:feature"]` → `"feature"`
-- `["type:task"]` → `"task"`
-- `[]` (ラベルなし、テンプレート導入前の既存issue) → `"task"` (後方互換のデフォルト)
-- `["type:bug", "type:feature"]` (両方付与された異常系) → `"bug"` (アーキテクチャ定義で定めた優先順位)
-- 未知のラベルのみ (`["enhancement"]`) → `"task"`
-
-### 手動確認 (E2E)
-
-1. GitHubのissue作成画面で3種類のテンプレートが選択肢に表示される
-2. バグ報告テンプレートから作成したissueに `type:bug` ラベルが付与されている
-3. 機能要望テンプレートから作成したissueに `type:feature` ラベルが付与されている
-4. タスクテンプレートから作成したissueに `type:task` ラベルが付与されている
-5. 上記3つのissueをそれぞれuserscriptで開き、パネルが種類に応じた表示になっている (タスクは既存ボタン一式、バグ報告・機能要望はプレースホルダー)
-6. ラベルを持たない既存issue (テンプレート導入前に作成したもの) を開いても、従来通り「タスク」として扱われ、既存ボタンが表示される
+1. issue詳細ページ以外のGitHubページ (旧 `@match` にマッチしないURL。例: 対象リポジトリの Pull Requests 一覧) を開く
+2. そのページ内のリンクからissue詳細ページへ遷移する (Turbo soft-navigation経由の遷移であること)
+3. 遷移後のissue詳細ページで agent-runner パネルが表示・動作することを確認する (修正前は表示されなかった経路)
+4. 比較として、同じissueのURLを直接アドレスバーに入力する / ブラウザをリロードする経路でも、引き続き正常に表示されることを確認する (既存動作のリグレッションが無いこと)
+5. issue詳細ページ以外のページ (Pull Requests一覧・Codeタブなど) でパネルが表示されない (誤表示が発生しない) ことを確認する
+6. 既存の issue 種別によるパネル表示切り替え (task = フルボタン、bug/feature = プレースホルダー) が引き続き正しく動作することを確認する
