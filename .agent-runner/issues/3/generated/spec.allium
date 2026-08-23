@@ -1,0 +1,111 @@
+-- allium: 3
+
+-- #2 で type:bug ラベル判定が可能になっている前提のもと、
+-- そのissueに対する原因調査 (読み取り専用) を実行する機能を定義する。
+
+enum ArtifactKind { convert | investigation }
+
+external entity Issue {
+    number: Integer
+    body: String                          -- 再現手順・期待する動作・実際の動作を含むissue本文
+    has_bug_label: Boolean                 -- type:bug ラベルの有無 (#2 で提供される前提)
+    jobs: Job with issue = this
+    is_locked: jobs.any(j => j.status = running)  -- issue単位ロック (既存のconvertジョブと同水準)
+}
+
+entity Job {
+    issue: Issue
+    kind: ArtifactKind
+    status: pending | running | succeeded | failed
+    repository_modified: Boolean          -- 調査ジョブでは常にfalseを維持する (commit・pushを行わない)
+    workspace_cleaned: Boolean             -- clone後の一時ディレクトリが片付いたか
+
+    transitions status {
+        pending -> running
+        running -> succeeded
+        running -> failed
+        terminal: succeeded
+        terminal: failed
+    }
+}
+
+entity InvestigationResult {
+    issue: Issue
+    job: Job
+    could_not_identify: Boolean
+    file_path: String when could_not_identify = false     -- 原因と推測されるファイルパス
+    location: String when could_not_identify = false        -- 行または関数名
+    evidence: String when could_not_identify = false         -- そう判断した根拠
+    checked_scope: String when could_not_identify = true     -- 特定できなかった場合に確認した範囲
+}
+
+entity GeneratedComment {
+    issue: Issue
+    kind: ArtifactKind
+    part: Integer
+    total: Integer
+}
+
+rule StartInvestigation {
+    when: RunInvestigation(issue)
+    requires:
+        issue.has_bug_label = true
+        not issue.is_locked
+    ensures:
+        Job.created(
+            issue: issue
+            kind: investigation
+            status: running
+            repository_modified: false
+            workspace_cleaned: false
+        )
+}
+
+rule CompleteInvestigation {
+    when: InvestigationSucceeded(job, result)
+    requires: job.status = running
+    ensures:
+        job.status = succeeded
+        job.workspace_cleaned = true
+        InvestigationResult.created(
+            issue: job.issue
+            job: job
+            could_not_identify: result.could_not_identify
+            file_path: result.file_path
+            location: result.location
+            evidence: result.evidence
+            checked_scope: result.checked_scope
+        )
+        GeneratedComment.created(issue: job.issue, kind: investigation, part: 1, total: 1)
+}
+
+rule FailInvestigation {
+    when: InvestigationFailed(job)
+    requires: job.status = running
+    ensures:
+        job.status = failed
+        job.workspace_cleaned = true
+}
+
+invariant NoRepositoryMutationForInvestigation {
+    for job in Jobs where kind = investigation:
+        job.repository_modified = false
+}
+
+invariant WorkspaceCleanedAfterSuccess {
+    for job in Jobs where kind = investigation and status = succeeded:
+        job.workspace_cleaned = true
+}
+
+invariant WorkspaceCleanedAfterFailure {
+    for job in Jobs where kind = investigation and status = failed:
+        job.workspace_cleaned = true
+}
+
+actor Maintainer {}
+
+surface InvestigateButton {
+    actor: Maintainer
+    visible_when: issue.has_bug_label = true
+    triggers: RunInvestigation(issue)
+}

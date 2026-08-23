@@ -25,7 +25,9 @@ export type CreatePrRequest = IssueRef;
 
 export type ResolveConflictsRequest = IssueRef;
 
-export type JobKind = "convert" | "create-pr" | "resolve-conflicts";
+export type InvestigateRequest = IssueRef;
+
+export type JobKind = "convert" | "create-pr" | "resolve-conflicts" | "investigate";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JobStartResponse = {

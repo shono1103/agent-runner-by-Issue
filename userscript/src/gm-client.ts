@@ -4,6 +4,7 @@ import type {
   ConvertRequest,
   CreatePrRequest,
   HealthResponse,
+  InvestigateRequest,
   JobConflictResponse,
   JobStartResponse,
   JobStatusResponse,
@@ -156,6 +157,10 @@ export async function getPrStatus(ref: {
     path: `/api/issues/pr-status?${params.toString()}`,
     timeoutMs: 10_000,
   });
+}
+
+export async function investigate(req: InvestigateRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/investigate", req);
 }
 
 async function postJobStart(path: string, body: unknown): Promise<JobLaunchResult> {
