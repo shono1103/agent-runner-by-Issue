@@ -38,6 +38,52 @@ cp webhook/.env.example webhook/.env
 # ALLOWED_AUTHORS (Issue コメントを信頼する GitHub ユーザー名。プロンプトインジェクション対策)
 ```
 
+### リモートホスト (tailscale 等) にインストールする場合
+
+**クライアントPCから** `webhook/scripts/install-remote.sh [remote-host] [remote-path]` を
+実行する。ローカルのリポジトリを `rsync` でリモートへ同期し (`.gitignore` 準拠で
+`node_modules/`・`.env` などは除外)、続けて `ssh -t` でリモート上の
+`webhook/scripts/setup-env.sh` を対話実行させる (トークン等のプロンプトはこの端末に
+そのまま出る)。接続先はデフォルトで `~/.ssh/config` の `shonoshono-home`、配置先はデフォルトで
+`~/opt/agent-runner-by-Issue` (相対パス指定。リモートの `$HOME` 基準)。
+どちらも `REMOTE_HOST` / `REMOTE_PATH` 環境変数か引数で上書きできる。
+
+```sh
+./webhook/scripts/install-remote.sh                       # 既定 (shonoshono-home:~/opt/agent-runner-by-Issue)
+./webhook/scripts/install-remote.sh shonoshono-home other/path
+```
+
+`webhook/scripts/setup-env.sh` 単体は、リモート上に既にコードがある状態で直接叩いてもよい
+(`install-remote.sh` はこれを ssh 越しに呼んでいるだけ)。どちらも Ubuntu Server の初期状態
+(git / pnpm / gh 未導入) を前提にしており、不足しているコマンドがあれば自動インストールは
+せず、実行すべきコマンドを提示してスクリプトを終了する
+(sudo を伴う操作を勝手に行わないため。提示されたコマンドを実行してから再実行する)。
+
+GitHub トークンは次の2方式から選べる。
+
+* `gh` コマンド経由 (`GITHUB_TOKEN_SOURCE=gh`) — 対象ホストで `gh auth login` 済みなら、
+  起動時に `gh auth token` の出力を使う。生の PAT を `.env` に置かずに済む
+* Personal Access Token を直接 `.env` に書く (`GITHUB_TOKEN_SOURCE=pat`、既定)
+
+`HOST` は `tailscale` コマンドがあれば `tailscale ip -4` の値を自動検出する。webhookを
+`127.0.0.1` 以外にbindする場合、これまでの「本質的な安全境界は127.0.0.1 bind」という
+前提が崩れる点に注意 (詳細は「安全上の注意」を参照)。tailnet インターフェースのIPに
+明示的にbindし、LANなど他のネットワークには晒さないこと。
+
+`pnpm install` の後、`webhook/scripts/install-service.sh` で systemd `--user` サービスとして
+常駐化できる (`install-remote.sh` からも続けて呼べる)。SSHセッションを閉じても動き続け、
+`Restart=on-failure` で異常終了時は自動再起動する。sudoは使わないが、ログアウト後も
+動かし続けるための `loginctl enable-linger` だけは権限が無いと失敗するため、その場合は
+提示される `sudo loginctl enable-linger <user>` を別途実行する。
+
+```sh
+ssh -t shonoshono-home "cd '~/opt/agent-runner-by-Issue' && webhook/scripts/install-service.sh"
+
+# 状態確認・ログ
+ssh shonoshono-home 'systemctl --user status agent-runner-webhook.service --no-pager'
+ssh shonoshono-home 'journalctl --user -u agent-runner-webhook.service -f'
+```
+
 ### webhook を起動する
 
 ```sh
@@ -70,20 +116,48 @@ pnpm --filter userscript dev   # dist/agent-runner.user.js を watch ビルド�
    // @grant        GM_addStyle
    // @connect      127.0.0.1
    // @connect      localhost
+   // @connect      100.106.101.15
    // @noframes
    // @require      file:///Users/shonoshono/repos/personal/agent-runner-by-Issue/userscript/dist/agent-runner.user.js
    // ==/UserScript==
    ```
 
+   `@connect` は webhook の接続先ホストを列挙する allowlist。webhook をリモート
+   (shonoshono-home の tailscale IP `100.106.101.15` など) で動かす場合はそのホストも
+   追加する (`userscript/vite.config.ts` の `connect` と揃える)。ここは Tampermonkey に
+   直接貼った内容がそのまま使われる (`vite.config.ts` を直しても反映されないので、両方
+   直す必要がある)。
+
 3. Tampermonkey の設定 (Advanced) で Externals の更新間隔を「Always」にする
    (既定はキャッシュされ、ビルドし直しても反映されない)
+
+### userscript をリモートでビルドして取得する
+
+`webhook` を shonoshono-home で動かす構成では、`userscript` もそちらでビルドしたい
+ことがある。`webhook/scripts/fetch-userscript.sh` はリモートで `pnpm --filter userscript
+build` を実行し、成果物 (`dist/agent-runner.user.js`) を取得する。
+
+```sh
+./webhook/scripts/fetch-userscript.sh                       # 既定 (shonoshono-home:~/opt/agent-runner-by-Issue)
+```
+
+取得した内容は次の3箇所に反映される。
+
+* ローカルの `userscript/dist/agent-runner.user.js` に保存 (上の devローダーの
+  `@require file://` がそのまま拾える)
+* `pbcopy` があればクリップボードにもコピー (Tampermonkey ダッシュボードに直接ペーストして
+  スタンドアロンなスクリプトとして登録する場合用)
+* 標準出力にも同じ内容を流す (`> path/to/file.user.js` などへの自由なリダイレクトも可能)
 4. 実際の GitHub Issue ページを開くと右下にパネルが表示される。⚙ から webhook URL
    (既定 `http://127.0.0.1:8787`) と `AGENT_RUNNER_TOKEN` を設定し、「疎通確認」で確認する
 
 ## 安全上の注意 (PoC としての前提)
 
-* webhook は `127.0.0.1` にのみ bind する。共有トークンは事故防止であって認証ではない
-  (userscript のソースに平文で入るため)
+* webhook は既定で `127.0.0.1` にのみ bind する。共有トークンは事故防止であって認証ではない
+  (userscript のソースに平文で入るため)。`HOST` を tailscale 等の別インターフェースに
+  変更する場合、境界は「そのネットワーク (tailnet) にいる端末だけが到達できる」ことに
+  置き換わる。`0.0.0.0` ではなく tailnet インターフェースの IP を明示し、LAN 等の
+  他ネットワークに晒さないこと
 * PR 作成ジョブは `acceptEdits` + ツール許可リストで動かし、`bypassPermissions` は使わない
   (隔離した clone ディレクトリという cwd 境界が実質のサンドボックスであり、
   `bypassPermissions` はその境界ごと外してしまう)
