@@ -1,0 +1,58 @@
+specification {
+  element actor
+  element system
+  element component
+}
+
+model {
+  githubUser = actor 'GitHub利用者' {
+    description 'issue詳細ページを様々な経路 (直接アクセス・フルリロード・他ページからのリンク) から開く'
+  }
+
+  github = system 'GitHub' {
+    description 'Webアプリ。Issuesページに加えPR一覧・Codeタブ・通知一覧などを持ち、Turbo/React soft-navigationでページ内遷移する'
+  }
+
+  userscript = system 'userscript (agent-runner)' {
+    description 'GitHub Issueページにagent-runnerパネルを注入するブラウザ拡張スクリプト'
+
+    viteConfig = component 'vite.config.ts' {
+      description 'userscriptの@matchパターンを定義する。https://github.com/*/*/issues/* から https://github.com/* (GitHubドメイン全体) に広げる'
+    }
+
+    mainTs = component 'main.ts' {
+      description 'マウント/アンマウント制御。sync()を300msポーリング・MutationObserver・turbo:load等のイベントリスナから呼び出し、currentIssue()の判定結果に基づきパネルをmount/unmountする'
+    }
+
+    locationTs = component 'location.ts' {
+      description '現在のURLがissue詳細ページかどうかを判定するcurrentIssue()を提供する。本変更では判定ロジック自体は変更しない'
+    }
+
+    mainTs -> locationTs 'sync()内でcurrentIssue()を呼び出しissue詳細ページかどうかを判定'
+  }
+
+  githubUser -> github 'GitHub上のページを閲覧・遷移する'
+  github -> viteConfig 'フルページロード時、@matchパターンに一致すればuserscriptを注入する (Tampermonkey/Violentmonkeyによる)'
+  github -> mainTs 'ページ内遷移 (Turbo/React soft-navigation, history.pushState) をhistory変更・DOM変更として発生させる'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript内部構成'
+    include *
+  }
+
+  dynamic view issueDetailViaSoftNavigation {
+    title '他GitHubページからのsoft-navigation経由でissue詳細ページに到達するフロー'
+    githubUser -> github 'issue詳細ページ以外のGitHubページ (旧@matchにマッチしないURL) を直接アクセス/フルリロードで開く'
+    github -> viteConfig '@matchが https://github.com/* にマッチしuserscriptを注入 (main.tsの初期化を含む)'
+    githubUser -> github 'ページ内リンクからissue詳細ページへ遷移 (Turbo soft-navigation、history.pushStateベース)'
+    github -> mainTs 'history変更/DOM変更を検知し、ポーリング・MutationObserver・turbo:loadリスナ経由でsync()が呼ばれる'
+    mainTs -> locationTs 'sync()がcurrentIssue()を呼び出し、遷移先がissue詳細ページかどうかを判定する'
+  }
+}

@@ -29,7 +29,7 @@ const defaultCreateIssueComment: DraftJobDeps["createIssueComment"] = async (
 
 function makeDeps(overrides: Partial<DraftJobDeps> = {}): DraftJobDeps {
   return {
-    getIssue: overrides.getIssue ?? (async () => ({ title: "タイトル", body: "本文" })),
+    getIssue: overrides.getIssue ?? (async () => ({ title: "タイトル", body: "本文", labels: [] })),
     listIssueComments: overrides.listIssueComments ?? (async () => []),
     createIssueComment: overrides.createIssueComment ?? defaultCreateIssueComment,
     runClaude:
@@ -120,7 +120,7 @@ test("runDraftJob: 入力範囲 - getIssue/listIssueComments/createIssueComment/
   const deps = makeDeps({
     getIssue: async () => {
       getIssueCalled = true;
-      return { title: "t", body: "b" };
+      return { title: "t", body: "b", labels: [] };
     },
   });
 

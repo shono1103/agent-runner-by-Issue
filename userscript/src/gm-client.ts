@@ -1,13 +1,17 @@
 import { GM_xmlhttpRequest } from "$";
 import type {
   ApiErrorResponse,
+  ClarifyRequest,
   ConvertRequest,
   CreatePrRequest,
   DraftRequest,
   HealthResponse,
+  InvestigateRequest,
   JobConflictResponse,
   JobStartResponse,
   JobStatusResponse,
+  PrStatusResponse,
+  ResolveConflictsRequest,
   ScaffoldRequest,
   ScaffoldResponse,
 } from "@agent-runner/webhook/api-types";
@@ -129,6 +133,40 @@ export async function postConvert(req: ConvertRequest): Promise<JobLaunchResult>
 
 export async function postCreatePr(req: CreatePrRequest): Promise<JobLaunchResult> {
   return postJobStart("/api/jobs/create-pr", req);
+}
+
+export async function postResolveConflicts(req: ResolveConflictsRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/resolve-conflicts", req);
+}
+
+/**
+ * 対象issueに紐づくOPENなPRの mergeable 状態を取得する。
+ * 「コンフリクト解決」ボタンの表示可否判定に使う。取得できなくてもパネル自体は使えるよう、
+ * 呼び出し側で失敗を許容すること。
+ */
+export async function getPrStatus(ref: {
+  owner: string;
+  repo: string;
+  issueNumber: number;
+}): Promise<PrStatusResponse> {
+  const params = new URLSearchParams({
+    owner: ref.owner,
+    repo: ref.repo,
+    issueNumber: String(ref.issueNumber),
+  });
+  return gmJson<PrStatusResponse>({
+    method: "GET",
+    path: `/api/issues/pr-status?${params.toString()}`,
+    timeoutMs: 10_000,
+  });
+}
+
+export async function investigate(req: InvestigateRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/investigate", req);
+}
+
+export async function postClarify(req: ClarifyRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/clarify", req);
 }
 
 export async function postDraft(req: DraftRequest): Promise<JobLaunchResult> {

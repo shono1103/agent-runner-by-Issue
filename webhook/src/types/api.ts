@@ -23,9 +23,21 @@ export type ConvertRequest = IssueRef & {
 
 export type CreatePrRequest = IssueRef;
 
+export type ResolveConflictsRequest = IssueRef;
+
+export type InvestigateRequest = IssueRef;
+
+export type ClarifyRequest = IssueRef;
+
 export type DraftRequest = IssueRef;
 
-export type JobKind = "convert" | "create-pr" | "draft";
+export type JobKind =
+  | "convert"
+  | "create-pr"
+  | "resolve-conflicts"
+  | "investigate"
+  | "clarify"
+  | "draft";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JobStartResponse = {
@@ -53,6 +65,18 @@ export type HealthResponse = {
   ok: true;
   version: string;
   dryRun: boolean;
+};
+
+/** 対象issueに紐づくOPENなPRの状態 (コンフリクト解決ボタンの表示判定に使う)。 */
+export type PrStatus = {
+  number: number;
+  branch: string;
+  /** GitHub がまだ計算中の場合は null になりうる。 */
+  mergeable: boolean | null;
+};
+
+export type PrStatusResponse = {
+  pr: PrStatus | null;
 };
 
 export type ApiErrorResponse = {

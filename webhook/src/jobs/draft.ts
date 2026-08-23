@@ -2,7 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "../config.ts";
-import { runClaude } from "../claude/run-claude.ts";
+import {
+  runClaude,
+  type ClaudeErr,
+  type ClaudeOk,
+  type RunClaudeOptions,
+} from "../claude/run-claude.ts";
 import type { GithubClient } from "../github.ts";
 import { createIssueComment, getIssue, listIssueComments } from "../github.ts";
 import { buildSourceMarker, parseMarker, SOURCE_KINDS, type SourceKind } from "../markers.ts";
@@ -22,7 +27,9 @@ export type DraftJobDeps = {
   getIssue: typeof getIssue;
   listIssueComments: typeof listIssueComments;
   createIssueComment: typeof createIssueComment;
-  runClaude: typeof runClaude;
+  // typeof runClaude のままだと generic シグネチャになり、テストの具体的なモックを
+  // 代入できない。investigate.ts と同じく、このジョブが期待する構造化出力に絞る。
+  runClaude: (opts: RunClaudeOptions) => Promise<ClaudeOk<DraftStructuredOutput> | ClaudeErr>;
 };
 
 const defaultDeps: DraftJobDeps = {
@@ -78,7 +85,7 @@ export async function runDraftJob(
         body: issue.body,
       });
 
-      const result = await deps.runClaude<DraftStructuredOutput>({
+      const result = await deps.runClaude({
         prompt: userPrompt,
         cwd: workDir,
         systemPrompt,
