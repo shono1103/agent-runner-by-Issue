@@ -1,16 +1,54 @@
+import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { loadEnvFile } from "./env-file.ts";
 
+/**
+ * 環境変数の読み込みは、この下の loadConfig(process.env) より必ず先に行う。
+ * ファイルの値がプロセス環境変数より優先される (理由は env-file.ts を参照)。
+ */
+export const envFile = loadEnvFile();
+
+if (!envFile.loaded) {
+  console.warn(
+    `[env] ${envFile.path} が見つかりません。プロセス環境変数のみで起動を試みます。`,
+  );
+} else if (envFile.overridden.length > 0) {
+  console.warn(
+    `[env] プロセスに残っていた環境変数を ${envFile.path} の値で上書きしました: ` +
+      envFile.overridden.join(", "),
+  );
+}
+
+/**
+ * true / false のみを受け付ける。`ture` のような打ち間違いを黙って false 扱いすると、
+ * DRY_RUN のつもりが実際に push してしまうため、曖昧な値は起動時に落とす。
+ */
 const boolFromString = z
   .string()
   .default("true")
-  .transform((v) => v.trim().toLowerCase() === "true");
+  .transform((v, ctx) => {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0") return false;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `true / false のいずれかを指定してください (受け取った値: "${v}")`,
+    });
+    return z.NEVER;
+  });
+
+const GITHUB_TOKEN_SOURCES = ["gh", "pat"] as const;
+type GithubTokenSource = (typeof GITHUB_TOKEN_SOURCES)[number];
 
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
   HOST: z.string().default("127.0.0.1"),
 
   AGENT_RUNNER_TOKEN: z.string().min(8, "AGENT_RUNNER_TOKEN is too short"),
-  GITHUB_TOKEN: z.string().min(1, "GITHUB_TOKEN is required"),
+  // "pat": GITHUB_TOKEN をそのまま使う。"gh": `gh auth token` の出力を使う
+  // (ログイン済み gh CLI を再利用し、生の PAT を .env に置かない選択肢)。
+  GITHUB_TOKEN_SOURCE: z.enum(GITHUB_TOKEN_SOURCES).default("pat"),
+  GITHUB_TOKEN: z.string().optional(),
 
   ALLOWED_AUTHORS: z
     .string()
@@ -54,6 +92,40 @@ export type Config = {
   investigateTimeoutMs: number;
 };
 
+/**
+ * GITHUB_TOKEN_SOURCE=pat なら GITHUB_TOKEN をそのまま返す。
+ * GITHUB_TOKEN_SOURCE=gh なら `gh auth token` を実行してその出力を使う
+ * (runGhAuthToken はテスト用の差し替え口)。
+ */
+export function resolveGithubToken(
+  source: GithubTokenSource,
+  patFromEnv: string | undefined,
+  runGhAuthToken: () => string = () =>
+    execFileSync("gh", ["auth", "token"], { encoding: "utf8" }),
+): string {
+  if (source === "pat") {
+    const token = patFromEnv?.trim();
+    if (!token) {
+      throw new Error("GITHUB_TOKEN_SOURCE=pat の場合は GITHUB_TOKEN が必須です。");
+    }
+    return token;
+  }
+  let output: string;
+  try {
+    output = runGhAuthToken();
+  } catch (e) {
+    throw new Error(
+      "`gh auth token` の実行に失敗しました。`gh auth login` 済みか確認してください: " +
+        String((e as Error)?.message ?? e),
+    );
+  }
+  const token = output.trim();
+  if (!token) {
+    throw new Error("`gh auth token` の出力が空でした。");
+  }
+  return token;
+}
+
 function loadConfig(env: NodeJS.ProcessEnv): Config {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
@@ -73,7 +145,7 @@ function loadConfig(env: NodeJS.ProcessEnv): Config {
     port: e.PORT,
     host: e.HOST,
     agentRunnerToken: e.AGENT_RUNNER_TOKEN,
-    githubToken: e.GITHUB_TOKEN,
+    githubToken: resolveGithubToken(e.GITHUB_TOKEN_SOURCE, e.GITHUB_TOKEN),
     allowedAuthors: e.ALLOWED_AUTHORS,
     botName: e.BOT_NAME,
     botEmail: e.BOT_EMAIL,

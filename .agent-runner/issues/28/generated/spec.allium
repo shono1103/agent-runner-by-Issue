@@ -1,0 +1,101 @@
+-- allium: 3
+
+entity PullRequest {
+    branch: String
+    mergeable: Boolean
+}
+
+entity Job {
+    pr: PullRequest
+    status: running | succeeded | failed
+    had_conflict: Boolean
+    pushed: Boolean
+
+    transitions status {
+        running -> succeeded
+        running -> failed
+        terminal: succeeded
+        terminal: failed
+    }
+
+    conflict_files: ConflictFile with job = this
+    all_resolved: conflict_files.all(f => f.resolved = true and f.unresolvable = false)
+}
+
+entity ConflictFile {
+    job: Job
+    path: String
+    resolved: Boolean
+    unresolvable: Boolean
+}
+
+rule StartResolveConflicts {
+    when: RunResolveConflicts(pr)
+    requires:
+        not pr.mergeable
+    ensures:
+        Job.created(
+            pr: pr
+            status: running
+            had_conflict: false
+            pushed: false
+        )
+}
+
+rule NoConflictFound {
+    when: MergeCheckedClean(job)
+    requires:
+        job.status = running
+        job.had_conflict = false
+    ensures:
+        job.status = succeeded
+        job.pushed = false
+}
+
+rule ConflictDetected {
+    when: ConflictFileFound(job, path)
+    requires: job.status = running
+    ensures:
+        job.had_conflict = true
+        ConflictFile.created(job: job, path: path, resolved: false, unresolvable: false)
+}
+
+rule PushAfterAllResolved {
+    when: AllConflictsResolved(job)
+    requires:
+        job.status = running
+        job.had_conflict = true
+        job.all_resolved = true
+    ensures:
+        job.status = succeeded
+        job.pushed = true
+}
+
+rule FailOnUnresolvable {
+    when: UnresolvableConflict(job, path)
+    requires: job.status = running
+    ensures:
+        job.status = failed
+        job.pushed = false
+        ConflictFile.created(job: job, path: path, resolved: false, unresolvable: true)
+}
+
+invariant NoPushWithoutSuccess {
+    for job in Jobs where pushed = true:
+        job.status = succeeded
+}
+
+invariant NoPushOnFailure {
+    for job in Jobs where status = failed:
+        job.pushed = false
+}
+
+actor Maintainer {}
+
+surface ResolveConflictButton {
+    actor: Maintainer
+    visible_when: not pr.mergeable
+    triggers: RunResolveConflicts(pr)
+}
+
+open question "「取り込みマージ」の厳密な意味的統合の度合いは未確定。単純なgit mergeとclaude cliによるマーカー解決を前提としている"

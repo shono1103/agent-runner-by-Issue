@@ -7,10 +7,10 @@
     "./api-types": "./src/types/api.ts"
   },
   "scripts": {
-    "dev": "node --watch --env-file=.env --experimental-transform-types src/index.ts",
-    "start": "node --env-file=.env --experimental-transform-types src/index.ts",
+    "dev": "node --watch --experimental-transform-types src/index.ts",
+    "start": "node --experimental-transform-types src/index.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --env-file=.env.test --experimental-transform-types --test src/**/*.test.ts"
+    "test": "AGENT_RUNNER_ENV_FILE=.env.test node --experimental-transform-types --test"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",

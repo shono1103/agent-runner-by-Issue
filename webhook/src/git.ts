@@ -88,6 +88,71 @@ export async function createBranch(ws: GitWorkspace, branch: string): Promise<vo
 }
 
 /**
+ * `prepareGitWorkspace` で clone した後、既存のブランチを checkout する版。
+ * `--single-branch` clone で作った remote の fetch refspec はデフォルトブランチ限定なので、
+ * 対象ブランチは明示的な refspec で `FETCH_HEAD` に取得してから local branch を作る。
+ */
+export async function prepareGitWorkspaceFromBranch(
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<GitWorkspace> {
+  const ws = await prepareGitWorkspace(owner, repo);
+  assertOk(
+    await execGit(["-C", ws.cloneDir, "fetch", "origin", branch], ws.env),
+    "fetch branch",
+  );
+  assertOk(
+    await execGit(["-C", ws.cloneDir, "checkout", "-b", branch, "FETCH_HEAD"], ws.env),
+    "checkout branch",
+  );
+  return ws;
+}
+
+export type MergeMainResult = {
+  conflicted: boolean;
+  conflictFiles: string[];
+};
+
+/**
+ * 現在 checkout しているブランチに `origin/main` を merge する (`--no-commit`)。
+ * コンフリクトが無ければ merge の結果を破棄し、作業ツリーをクリーンなまま保つ
+ * (このジョブはコンフリクト解決以外の変更を意図せず持ち込まないため)。
+ * コンフリクトがあれば、マーカーが書き込まれた状態のまま呼び出し側に返す。
+ */
+export async function mergeMain(ws: GitWorkspace): Promise<MergeMainResult> {
+  assertOk(
+    await execGit(
+      ["-C", ws.cloneDir, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"],
+      ws.env,
+    ),
+    "fetch main",
+  );
+  await execGit(
+    ["-C", ws.cloneDir, "merge", "--no-commit", "--no-ff", "origin/main"],
+    ws.env,
+  );
+
+  const diff = await execGit(
+    ["-C", ws.cloneDir, "diff", "--name-only", "--diff-filter=U"],
+    ws.env,
+  );
+  const conflictFiles = diff.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (conflictFiles.length === 0) {
+    // コンフリクトが無ければ (「Already up to date」やクリーンマージ含め) merge を中断し、
+    // 作業ツリー・インデックスを HEAD の状態に戻す。MERGE_HEAD が無い場合の失敗は無害。
+    await execGit(["-C", ws.cloneDir, "merge", "--abort"], ws.env);
+    return { conflicted: false, conflictFiles: [] };
+  }
+
+  return { conflicted: true, conflictFiles };
+}
+
+/**
  * git status --porcelain の変更ファイル一覧 (未ステージ・未追跡も含む)。
  * --untracked-files=all を指定し、新規の未追跡ディレクトリを1エントリに丸めず
  * 個々のファイルパスとして展開する (safety.ts がファイル単位で安全性を判定するため)。
