@@ -29,7 +29,15 @@ export type InvestigateRequest = IssueRef;
 
 export type ClarifyRequest = IssueRef;
 
-export type JobKind = "convert" | "create-pr" | "resolve-conflicts" | "investigate" | "clarify";
+export type DraftRequest = IssueRef;
+
+export type JobKind =
+  | "convert"
+  | "create-pr"
+  | "resolve-conflicts"
+  | "investigate"
+  | "clarify"
+  | "draft";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JobStartResponse = {

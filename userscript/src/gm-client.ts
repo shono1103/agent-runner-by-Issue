@@ -4,6 +4,7 @@ import type {
   ClarifyRequest,
   ConvertRequest,
   CreatePrRequest,
+  DraftRequest,
   HealthResponse,
   InvestigateRequest,
   JobConflictResponse,
@@ -166,6 +167,10 @@ export async function investigate(req: InvestigateRequest): Promise<JobLaunchRes
 
 export async function postClarify(req: ClarifyRequest): Promise<JobLaunchResult> {
   return postJobStart("/api/jobs/clarify", req);
+}
+
+export async function postDraft(req: DraftRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/draft", req);
 }
 
 async function postJobStart(path: string, body: unknown): Promise<JobLaunchResult> {

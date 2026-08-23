@@ -1,0 +1,107 @@
+specification {
+  element actor
+  element system
+  element component
+}
+
+model {
+  maintainer = actor 'メンテナ' {
+    description 'issueのタイトル・本文だけを書き、定義書 (source3コメント) の構築は自分で行いたくない利用者'
+  }
+
+  webhook = system 'webhook' {
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /draft エンドポイント。IssueRefSchemaを検証し jobLocks.acquire(ref, job.id, false) でissue単位のロックを取得してジョブを起動する (リポジトリ単位ロックは取らない)'
+    }
+
+    draftJob = component 'jobs/draft.ts' {
+      description 'runDraftJob(job, client, ref): getIssue()でtitle/body取得→listIssueCommentsで既存sourceコメントの有無をkindごとに判定→不足分のみbuildDraftPromptでclaude cliに生成させる→createIssueCommentで新規投稿。既に存在するkindは上書きしない。3種すべて揃っていればclaude cliを呼ばず即完了する'
+    }
+
+    draftPrompt = component 'prompts/draft.ts' {
+      description 'buildDraftPrompt({ title, body }): issueのタイトル・本文から要件定義/システムアーキテクチャ定義/テスト定義の3文書を1回のclaude cli呼び出しでまとめて生成するsystemPrompt/userPromptとDRAFT_JSON_SCHEMAを組み立てる。3文書間の用語・粒度の整合性に配慮する指示を含む'
+    }
+
+    apiTypes = component 'types/api.ts' {
+      description 'JobKindに"draft"を追加、DraftRequest = IssueRefを追加'
+    }
+
+    markers = component 'markers.ts' {
+      description 'buildSourceMarker(kind)/parseMarker()。draftJobが投稿するsourceコメントのマーカー形式はここに完全準拠する (convertジョブのextractSections/requireSectionsが無変更で動作するための前提)'
+    }
+
+    githubClient = component 'github.ts' {
+      description 'getIssue()でissue title/body取得、listIssueComments()で既存コメント取得、createIssueComment()でsourceコメントを新規投稿する'
+    }
+
+    convertJob = component 'jobs/convert.ts' {
+      description '既存ジョブ。source3コメントを読みAllium/LikeC4/Superpowersに変換する。draftJobの出力(source3コメント)をそのまま入力として使う'
+    }
+
+    jobsRoute -> draftJob 'ジョブを実行'
+    draftJob -> apiTypes 'DraftRequest/JobKindを参照'
+    draftJob -> draftPrompt 'buildDraftPromptでprompt/schemaを取得'
+    draftJob -> markers 'buildSourceMarker(kind)でコメント本文を組み立て、parseMarker()で既存コメントのkindを判定'
+    draftJob -> githubClient 'getIssue/listIssueComments/createIssueCommentを呼ぶ'
+    draftJob -> convertJob '生成したsource3コメントがconvertJobの入力になる (ジョブ間の直接呼び出しはない。人間が後続でconvertを起動する)'
+  }
+
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。draftJobでは対象リポジトリをcloneせず、issueのtitle/bodyのみをtools: []で渡す (コードを読ませない構成)'
+  }
+
+  github = system 'GitHub' {
+    description 'Issueのtitle/body/コメントの取得元。draftJobからgetIssue()/listIssueComments()/createIssueComment()で参照・更新される'
+  }
+
+  userscript = system 'userscript' {
+    description 'ブラウザ上でGitHub Issue画面にボタンUIを注入するuserscript'
+
+    gmClient = component 'gm-client.ts' {
+      description 'postDraft(ref)でPOST /draftを呼ぶ (postConvertと同様にpostJobStartを介す)'
+    }
+
+    panel = component 'ui/panel.ts' {
+      description '既存の「変換」セクション (convertRow) に、個別フォーマット選択ボタンは追加せず「定義書作成」ボタン (draftBtn) を1つだけ「すべて生成」ボタン (allBtn) の隣に追加する。クリックでpostDraft(issue)を呼ぶ'
+    }
+
+    panel -> gmClient '「定義書作成」ボタン押下でpostDraft(issue)を呼ぶ'
+  }
+
+  maintainer -> panel '「定義書作成」ボタンを押す (issueのタイトル・本文のみを入力とする)'
+  gmClient -> jobsRoute 'POST /draft'
+  draftJob -> claudeCli 'issueのtitle/bodyのみを渡し、コードを読ませずに3文書を生成させる'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of webhook {
+    title 'webhook内部構成 (draftジョブとconvertジョブの関係を含む)'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript内部構成'
+    include *
+  }
+
+  dynamic view draftFlow {
+    title 'draftジョブの実行フロー (issue本文 -> source3コメント -> (後続で) convertジョブ)'
+    maintainer -> panel '「定義書作成」ボタンをクリック'
+    panel -> gmClient 'postDraft(issue)を呼ぶ'
+    gmClient -> jobsRoute 'POST /draft'
+    jobsRoute -> draftJob 'jobLocks.acquire(ref, job.id, false)でissue単位ロックを取得しジョブを実行'
+    draftJob -> githubClient 'getIssue()でtitle/body取得、listIssueComments()で既存sourceコメントのkindを確認'
+    draftJob -> draftPrompt '不足しているkindがあればbuildDraftPromptでprompt/schemaを構築'
+    draftJob -> claudeCli 'issueのtitle/bodyのみを渡し3文書を生成依頼 (コードは読ませない)'
+    draftJob -> markers 'buildSourceMarker(kind)でコメント本文を組み立て'
+    draftJob -> githubClient 'createIssueComment()で不足していたkindのみ新規投稿 (既存kindは上書きしない)'
+    draftJob -> convertJob '(後続で人間が「すべて生成」を押すと) 投稿されたsource3コメントがconvertJobの入力になる'
+  }
+}
