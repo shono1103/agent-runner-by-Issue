@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { config } from "./config.ts";
 import { healthRoute } from "./routes/health.ts";
 import { jobsRoute } from "./routes/jobs.ts";
+import { prStatusRoute } from "./routes/prStatus.ts";
 import { scaffoldRoute } from "./routes/scaffold.ts";
 import type { ApiErrorResponse } from "./types/api.ts";
 
@@ -40,6 +41,7 @@ app.use("/api/*", async (c, next) => {
 
 app.route("/api/health", healthRoute);
 app.route("/api/issues/scaffold", scaffoldRoute);
+app.route("/api/issues/pr-status", prStatusRoute);
 app.route("/api/jobs", jobsRoute);
 
 app.notFound((c) =>
