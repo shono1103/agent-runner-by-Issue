@@ -29,6 +29,27 @@ pnpm workspaces によるモノレポで、以下の2つのサブプロジェク
 **Superpowers = 実行計画**。Allium・Superpowers は要件定義+テスト定義を、LikeC4 は
 システムアーキテクチャ定義を入力にする。
 
+### 仕様の置き場所 (`.agent-runner/issues/<N>/`)
+
+PR 作成ジョブは、確定した仕様を対象 issue の番号ごとのディレクトリに書き出してから
+claude cli に実装させる。パスは `webhook/src/spec-dir.ts` の `specDirFor()` が唯一の定義。
+
+```
+.agent-runner/issues/<N>/
+├── source/                 # 人間が Issue コメントに書いた原文
+│   ├── requirements.md
+│   ├── architecture.md
+│   └── tests.md
+└── generated/              # claude cli による変換結果 (無いこともある)
+    ├── design.md           # Superpowers design doc
+    ├── architecture.c4     # LikeC4
+    └── spec.allium         # Allium
+```
+
+issue ごとに分かれているため、**別々の issue のPRがこのディレクトリで衝突することはなく、
+先にマージされた issue の仕様が後の PR 作成で上書きされて消えることもない**。過去の issue
+の仕様はそのままリポジトリに残る (実装の根拠のアーカイブになる)。
+
 ## セットアップ
 
 ```sh
