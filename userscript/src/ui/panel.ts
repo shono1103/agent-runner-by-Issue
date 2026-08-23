@@ -2,9 +2,11 @@ import type { ConvertTarget } from "@agent-runner/webhook/api-types";
 import {
   HttpError,
   getHealth,
+  getPrStatus,
   pollJob,
   postConvert,
   postCreatePr,
+  postResolveConflicts,
   postScaffold,
   type JobLaunchResult,
 } from "../gm-client.ts";
@@ -97,6 +99,20 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
 
   const log = document.createElement("div");
   log.className = "log";
+
+  // task 種別のときのみ生成される。PR が mergeable: false のときだけ表示する。
+  let conflictLabel: HTMLElement | null = null;
+  let conflictRow: HTMLElement | null = null;
+  let conflictVisible = false;
+  // 設定画面を開閉する際、conflictLabel/conflictRow は非表示状態を保ったまま復元する
+  // (単純に display: "" へ戻すと、非表示にしていたはずのボタンが出てきてしまう)。
+  const restoreChildDisplay = (c: HTMLElement) => {
+    if ((c === conflictLabel || c === conflictRow) && !conflictVisible) {
+      c.style.display = "none";
+      return;
+    }
+    c.style.display = "";
+  };
 
   const allButtons: HTMLButtonElement[] = [];
   const setBusy = (busy: boolean) => {
@@ -203,8 +219,29 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     const prBtn = mkButton("PR を作成", "action danger");
     prRow.append(prBtn);
 
-    body.append(scaffoldRow, convertLabel, convertRow, prLabel, prRow, status, log);
-    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn);
+    // 対象issueのPRが mergeable: false (コンフリクト中) のときだけ表示する。
+    conflictLabel = document.createElement("div");
+    conflictLabel.className = "section-label";
+    conflictLabel.textContent = "コンフリクト解決";
+    conflictLabel.style.display = "none";
+    conflictRow = document.createElement("div");
+    conflictRow.className = "row";
+    conflictRow.style.display = "none";
+    const conflictBtn = mkButton("コンフリクト解決", "action danger");
+    conflictRow.append(conflictBtn);
+
+    body.append(
+      scaffoldRow,
+      convertLabel,
+      convertRow,
+      prLabel,
+      prRow,
+      conflictLabel,
+      conflictRow,
+      status,
+      log,
+    );
+    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn, conflictBtn);
 
     scaffoldBtn.addEventListener("click", () => {
       void (async () => {
@@ -250,6 +287,14 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       if (!ok) return;
       void withJob("PR 作成", () => postCreatePr(issue));
     });
+
+    conflictBtn.addEventListener("click", () => {
+      const ok = window.confirm(
+        `Issue #${issue.issueNumber} のPRに main を取り込みマージし、コンフリクトを解決します。よろしいですか?`,
+      );
+      if (!ok) return;
+      void withJob("コンフリクト解決", () => postResolveConflicts(issue));
+    });
   } else {
     // bug / feature 種別: 対応する機能 (#3 / #4) 実装までのプレースホルダー表示。
     const placeholderLabel = document.createElement("div");
@@ -279,13 +324,13 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     const view = renderSettingsView(
       () => {
         view.element.remove();
-        for (const c of originalChildren) c.style.display = "";
+        for (const c of originalChildren) restoreChildDisplay(c);
         showingSettings = false;
         setStatus("設定を保存しました");
       },
       () => {
         view.element.remove();
-        for (const c of originalChildren) c.style.display = "";
+        for (const c of originalChildren) restoreChildDisplay(c);
         showingSettings = false;
       },
     );
@@ -304,6 +349,20 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     } catch {
       dot.className = "dot error";
       setStatus("webhook サーバーに接続できません");
+      return;
+    }
+
+    if (kind === "task" && conflictLabel && conflictRow) {
+      try {
+        const prStatus = await getPrStatus(issue);
+        if (prStatus.pr && prStatus.pr.mergeable === false) {
+          conflictVisible = true;
+          conflictLabel.style.display = "";
+          conflictRow.style.display = "";
+        }
+      } catch {
+        // PR状態の取得に失敗してもパネル自体は使えるようにする (ボタンは非表示のまま)。
+      }
     }
   })();
 

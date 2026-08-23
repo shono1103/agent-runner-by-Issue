@@ -1,21 +1,62 @@
 ## システムアーキテクチャ定義
 
-### 方針
+### 全体像
 
-既存の `userscript/src/main.ts` の `sync()` は300msポーリング + `MutationObserver` + turbo系イベントで「今マウントすべきか/どのissueを対象にすべきか」を判定している。この仕組みに「重なり表示中かどうか」の判定を1つ追加するだけで対応する。新しい監視機構は追加しない。
+既存の `webhook/src/jobs/createPr.ts` の「リポジトリを clone → claude cli に実装させる →
+commit → push」という流れを踏襲する。ただし対象は新規ブランチではなく、
+**既に存在する `agent-runner/issue-<N>-<hash>` ブランチ**であり、実装ではなく
+「main を merge してコンフリクトを解消する」ことが目的になる。
 
 ### 追加・変更するファイル
 
-- `userscript/src/location.ts`
-  - `isSubIssueOverlayOpen(): boolean` を追加する
-  - 判定方法は実装着手時にGitHubの実際のDOMを調査して確定する。有力な候補は、GitHubの他のオーバーレイ機能 (差分プレビュー等) と同様に `role="dialog"` またはSub-issue専用の `data-*` 属性を持つ要素の有無を見る方法。調査結果に応じてこの関数の中身だけを差し替えられるよう、判定ロジックはこの関数1箇所に閉じ込める
-  - 誤検知防止のため、GitHubの他の機能 (ラベル編集ドロップダウン等の別のdialog/popover) と混同しない、Sub-issue表示に特有のセレクタを使うこと
-- `userscript/src/main.ts`
-  - `sync()` の冒頭、`currentIssue()` の判定より前に `isSubIssueOverlayOpen()` をチェックする
-  - `true` の場合は即座に `unmount()` を呼んで `return` する (通常のissue判定・マウント処理は行わない)
-  - `false` の場合は既存の `sync()` のロジックをそのまま実行する
+- `webhook/src/types/api.ts`
+  - `JobKind` に `"resolve-conflicts"` を追加
+  - `ResolveConflictsRequest = IssueRef` を追加 (対象PRは issue から導出する)
+- `webhook/src/github.ts`
+  - `findOpenPrForIssue(client, ref): Promise<{ number: number; branch: string } | null>` を追加。
+    `gh pr list` 相当を GitHub API (`GET /repos/{owner}/{repo}/pulls`) で行い、
+    本文に `Closes #<N>` を含む、または head ブランチ名が `agent-runner/issue-<N>-` で
+    始まる OPEN な PR を検索する
+- `webhook/src/git.ts`
+  - `prepareGitWorkspaceFromBranch(owner, repo, branch): Promise<GitWorkspace>` を追加
+    (`prepareGitWorkspace` の clone 後に対象ブランチを checkout する版)
+  - `mergeMain(ws): Promise<{ conflicted: boolean; conflictFiles: string[] }>` を追加。
+    `git fetch origin main && git merge --no-commit origin/main` を実行し、
+    `git diff --name-only --diff-filter=U` でコンフリクトファイルを取得する
+- `webhook/src/prompts/resolveConflicts.ts` (新規)
+  - `buildResolveConflictPrompt(filePath, conflictedContent)` —
+    `<<<<<<<`/`=======`/`>>>>>>>` を含むファイル内容を渡し、
+    「mainの変更意図」「PRブランチの変更意図」の両方を汲んで統合したファイル内容を
+    生成させる (構造化出力: `{ resolvedContent: string, unresolvable: boolean, reason: string }`)
+- `webhook/src/jobs/resolveConflicts.ts` (新規)
+  - `runResolveConflictsJob(job, client, ref)`
+  - `findOpenPrForIssue()` で対象PR/ブランチを特定 (無ければ失敗で終了)
+  - `prepareGitWorkspaceFromBranch()` で対象ブランチを clone
+  - `mergeMain()` でコンフリクト有無を判定。コンフリクトが無ければ「解決不要」として
+    成功で終了 (push しない)
+  - コンフリクトがあれば、コンフリクトファイルごとに `buildResolveConflictPrompt` で
+    claude cli (`runClaude()`, `tools: ["Read"]` のみ。ファイル書き込みは
+    このジョブ側が `resolvedContent` を書き込む形にし、claude cli自体には
+    Write/Edit/Bashを渡さない) を呼び、解決結果を得る
+  - `unresolvable: true` が1件でもあれば、ジョブを失敗にし push しない。
+    どのファイルが解決不能だったかを結果に含める
+  - 全て解決できれば、各ファイルに `resolvedContent` を書き込み、
+    `assertSafeDiff()` で安全検査 (既存の `createPr.ts` と同じ) → マージコミットとして
+    commit → push する
+- `webhook/src/routes/jobs.ts`
+  - `POST /resolve-conflicts` を追加。`jobLocks.acquire(ref, job.id, true)`
+    (`create-pr` と同じくリポジトリ単位ロックも取得。git push が競合するため)
+- `userscript/src/gm-client.ts`
+  - `resolveConflicts(ref)` を追加
+- `userscript/src/ui/panel.ts`
+  - 対象issueに紐づくPRの `mergeable` 状態を取得し (`GET /repos/.../pulls` を webhook経由で
+    参照する新しい軽量エンドポイント、または既存の `create-pr` 結果に含まれる `prUrl` から
+    ユーザーがGitHub上で確認する運用と割り切るかは実装時に判断)、`false` のときのみ
+    「コンフリクト解決」ボタンを表示する
 
 ### 影響範囲
 
-- `unmount()` / `mount()` など既存の関数はそのまま流用し、新規に追加するのは検知関数と `sync()` 冒頭の分岐のみ
-- ジョブ実行中 (webhookへのポーリング等) の挙動には手を入れない。重なり表示中にパネルが消えても、既存の非同期処理自体は要件上とくに中断しない
+- 既存の `create-pr`/`convert` ジョブのロジックには変更を加えない (新規ジョブとして追加)
+- 本ジョブ自体も `userscript/src/ui/panel.ts` や `webhook/src/types/api.ts` を編集するため、
+  他issue (#3/#4/#9/#23) のPRとコンフリクトしうる。これは本ジョブが解決しようとしている
+  問題そのものであり、実装時点では既存PRのマージ順序調整で対応する
