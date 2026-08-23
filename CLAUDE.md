@@ -24,6 +24,13 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   パースしてから `is_error` → `structured_output` の順に見る。
 * PR 作成ジョブ (`webhook/src/jobs/createPr.ts`) は `permissionMode: "acceptEdits"` 固定。
   `bypassPermissions` は使わない (隔離 clone の cwd 境界を自ら外すことになるため)。
+* 環境変数は `webhook/src/env-file.ts` が `.env` を読んで **`process.env` を上書きする**。
+  node の `--env-file` は既存の `process.env` を上書きしないため、systemd の
+  `Environment=` やシェルの `export` に残った古い値が勝ってしまうのを防ぐためのもの。
+  `--env-file` を復活させないこと。読むファイルは `AGENT_RUNNER_ENV_FILE` で切り替える
+  (テストは `.env.test` を指している)。
+* `.env` を書き換えたら webhook を**再起動**する。プロセスは起動時の値を握ったままで、
+  `/api/health` の `dryRun` にも古い値が出続ける。
 * userscript から webhook を叩くのは `GM_xmlhttpRequest` のみ。GitHub の CSP
   (`connect-src` に localhost が無い) により素の `fetch` は使えない。
 

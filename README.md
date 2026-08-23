@@ -92,7 +92,31 @@ pnpm --filter webhook dev   # http://127.0.0.1:8787
 
 `AGENT_RUNNER_DRY_RUN=true` が既定値。この間は PR 作成ジョブが `git push` / PR 作成を
 行わず、ブランチと差分だけをローカルの一時ディレクトリに残す。本番運用に切り替えるときは
-明示的に `false` にする。
+明示的に `false` にする (`true` / `false` 以外の値を書くと起動時にエラーになる)。
+
+#### 設定の読み込み順 (`.env` が常に勝つ)
+
+node の `--env-file` は既に `process.env` にあるキーを上書きしないため、systemd の
+`Environment=` やシェルの `export` に古い値が残っていると、`.env` を書き換えても
+前回の値のまま起動してしまう。これを避けるため webhook は `--env-file` を使わず、
+`webhook/src/env-file.ts` が `.env` を読んで**プロセス環境変数を上書きする**。
+
+* 読み込むファイルは `AGENT_RUNNER_ENV_FILE` で変更できる (相対パスは `webhook/` 基準、
+  既定は `webhook/.env`)。`PORT=9999 pnpm --filter webhook start` のような一時的な
+  上書きは効かないので、別の env ファイルを用意して `AGENT_RUNNER_ENV_FILE` で指す
+* 上書きが起きたキー名は起動時に `[env] ...` として警告に出る
+* 起動ログに、実際に読み込んだ env ファイルのパスと `DRY_RUN` の値が出る
+
+```
+agent-runner webhook listening on http://100.106.101.15:8787 (DRY_RUN=false, env=/home/…/webhook/.env)
+```
+
+**`.env` を書き換えたら webhook を再起動すること。** 動いているプロセスは起動時の値を
+握ったままなので、userscript の「疎通確認」にも古い `DRY_RUN` が表示される。
+
+```sh
+systemctl --user restart agent-runner-webhook.service   # 常駐サービスの場合
+```
 
 ### userscript を Tampermonkey に読み込む
 
