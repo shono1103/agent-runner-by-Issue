@@ -1,0 +1,60 @@
+specification {
+  element system
+  element component
+  element actor
+}
+
+model {
+  maintainer = actor 'Maintainer' {
+    description 'agent-runner-by-Issue の運用者'
+  }
+
+  userscript = system 'userscript' {
+    location = component 'location.ts (currentPr)'
+    mainTs = component 'main.ts (sync)'
+    panel = component 'ui/panel.ts (mountPrPanel)'
+    gmClient = component 'gm-client.ts (getIssueForPr)'
+
+    mainTs -> location 'PRページか判定'
+    mainTs -> panel 'PR用パネルをマウント'
+    panel -> gmClient 'issue番号・mergeable状態を取得'
+  }
+
+  webhook = system 'webhook' {
+    prStatusRoute = component 'routes/prStatus.ts (GET /api/prs/:number/issue)'
+    githubLib = component 'github.ts (findIssueForPr)'
+
+    prStatusRoute -> githubLib 'PR本文/ブランチ名からissue番号を逆引き'
+  }
+
+  github = system 'GitHub' {
+    description 'issue・PR・リポジトリのホスティング先'
+  }
+
+  maintainer -> userscript 'PRページを開く'
+  userscript.gmClient -> webhook.prStatusRoute 'GET /api/prs/:number/issue'
+  webhook.githubLib -> github 'PR本文・ブランチ名を取得'
+  maintainer -> userscript.panel 'コンフリクト解決ボタンを押す (#28機能を再利用)'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript 内部構成'
+    include *
+  }
+
+  dynamic view detectAndShow {
+    title 'PRページでのパネル表示判定フロー'
+    maintainer -> userscript.mainTs 'PRページを開く'
+    userscript.mainTs -> userscript.location 'currentPr() で判定'
+    userscript.mainTs -> userscript.gmClient 'getIssueForPr() 呼び出し'
+    userscript.gmClient -> webhook.prStatusRoute 'GET /api/prs/:number/issue'
+    webhook.prStatusRoute -> webhook.githubLib 'issue番号を逆引き'
+    userscript.mainTs -> userscript.panel 'issueNumber!=null かつ mergeable=false ならマウント'
+  }
+}

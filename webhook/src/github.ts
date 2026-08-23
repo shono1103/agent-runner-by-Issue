@@ -275,6 +275,34 @@ export async function findOpenPrForIssue(
   return { number: latest.number, branch: latest.head.ref };
 }
 
+/**
+ * PR番号から対応するissue番号を逆引きする。PR本文の `Closes #<N>` を優先して探し、
+ * 無ければ head ブランチ名 `agent-runner/issue-<N>-` から抽出する。
+ * どちらの手がかりも無い場合は null を返す (agent-runner 由来のPRではない可能性が高いため)。
+ */
+export async function findIssueForPr(
+  client: GithubClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<number | null> {
+  const { data } = await client.octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: prNumber,
+  });
+
+  const closesRe = /\bCloses\s+#(\d+)\b/i;
+  const bodyMatch = closesRe.exec(data.body ?? "");
+  if (bodyMatch?.[1]) return Number(bodyMatch[1]);
+
+  const branchRe = /^agent-runner\/issue-(\d+)-/;
+  const branchMatch = branchRe.exec(data.head?.ref ?? "");
+  if (branchMatch?.[1]) return Number(branchMatch[1]);
+
+  return null;
+}
+
 /** 単一PRの `mergeable` 状態を取得する。GitHub が計算中の場合は null になりうる。 */
 export async function getPullRequestMergeable(
   client: GithubClient,

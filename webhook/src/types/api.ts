@@ -79,6 +79,15 @@ export type PrStatusResponse = {
   pr: PrStatus | null;
 };
 
+/**
+ * PRページ用: PR番号に対応するissue番号とmergeable状態
+ * (PRページの「コンフリクト解決」ボタン表示可否判定に使う)。
+ * 対応するissueが特定できない場合は issueNumber: null のみを返す (エラーではない)。
+ */
+export type PrIssueStatusResponse =
+  | { issueNumber: number; mergeable: boolean | null }
+  | { issueNumber: null };
+
 export type ApiErrorResponse = {
   error: string;
   message: string;

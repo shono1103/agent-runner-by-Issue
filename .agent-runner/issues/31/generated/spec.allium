@@ -1,0 +1,51 @@
+-- allium: 3
+
+entity Pr {
+    number: Integer
+    issue_number: Integer?
+    mergeable: Boolean
+
+    has_linked_issue: issue_number != null
+    should_show_panel: has_linked_issue and not mergeable
+    panels: PrPanel with pr = this
+}
+
+entity PrPanel {
+    pr: Pr
+    visible: Boolean
+}
+
+rule OpenPrPage {
+    when: PrPageOpened(pr)
+    ensures:
+        PrPanel.created(pr: pr, visible: pr.should_show_panel)
+}
+
+rule PrBecomesMergeable {
+    when: pr: Pr.mergeable transitions_to true
+    requires: pr.panels.any(p => p.visible = true)
+    ensures:
+        pr.panels.first.visible = false
+}
+
+rule PrLosesIssueLink {
+    when: PrRelinkChecked(pr)
+    requires: not pr.has_linked_issue
+    ensures:
+        pr.panels.all(p => p.visible = false)
+}
+
+invariant PanelVisibleOnlyWhenShould {
+    for pr in Prs:
+        pr.panels.all(p => p.visible = pr.should_show_panel) when pr.panels.count > 0
+}
+
+actor Maintainer {}
+
+surface ResolveConflictButtonOnPrPage {
+    actor: Maintainer
+    visible_when: pr.should_show_panel
+    triggers: RunResolveConflicts(pr)
+}
+
+open question "issue番号の特定に失敗するケース (Closesの記法揺れ・ブランチ名変更など) の扱いは未確定。今回はnullとして扱い、パネルを表示しない方針とする"
