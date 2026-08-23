@@ -1,40 +1,32 @@
 ## システムアーキテクチャ定義
 
-### 配置
+### 全体像
 
-- `.github/ISSUE_TEMPLATE/bug_report.yml`
-- `.github/ISSUE_TEMPLATE/feature_request.yml`
-- `.github/ISSUE_TEMPLATE/task.yml`
-- `.github/ISSUE_TEMPLATE/config.yml` (`blank_issues_enabled: false` にしてテンプレート経由の作成を必須にする)
+`webhook/src/jobs/createPr.ts` の「リポジトリをcloneしてclaude cliに渡す」流れと、`webhook/src/jobs/convert.ts` の「生成結果をコメントとしてupsertする」流れを組み合わせる。ただし本ジョブはコードを変更しないため、branch作成・commit・pushは行わない。
 
-GitHubのIssue Forms (`.yml` 形式) を採用する。Markdownテンプレートではなく Issue Forms を選ぶ理由は、`labels:` フィールドでissue作成時に固定ラベルを自動付与でき、これを種類判別の目印として使えるため。
+### 追加・変更するファイル
 
-### 種類判別の目印
+- `webhook/src/types/api.ts`
+  - `JobKind` に `"investigate"` を追加
+  - `InvestigateRequest = IssueRef` を追加
+- `webhook/src/markers.ts`
+  - `GENERATED_KINDS` に `"investigation"` を追加 (`agent-runner:generated:investigation:1/1` マーカーで既存の `upsertGeneratedComments` / `collectGeneratedArtifact` の仕組みにそのまま乗せる)
+- `webhook/src/prompts/investigate.ts` (新規)
+  - `buildInvestigatePrompt(issueBody: string)` — バグ報告issue本文を渡し、原因箇所・根拠・確認範囲を構造化出力させるsystemPrompt/userPromptとJSON Schemaを組み立てる (`prompts/convert.ts` と同様の構成)
+- `webhook/src/jobs/investigate.ts` (新規)
+  - `runInvestigateJob(job, client, ref)`
+  - `getIssue()` でissue本文を取得
+  - `prepareGitWorkspace(ref.owner, ref.repo)` (`git.ts`) でread-only clone。branch作成・commit・pushは呼ばない
+  - `runClaude()` を `tools: ["Read", "Grep", "Glob"]` のみ (Write/Edit/Bashを渡さない。調査専用で変更を許さないため `createPr.ts` の `IMPLEMENT_TOOLS` より狭い許可リストにする)、`permissionMode` は指定しない (書き込み系ツールが無いため確認不要)
+  - 結果を `upsertGeneratedComments(client, ref, "investigation", body, existing)` でコメントに反映
+  - `finally` で必ず `cleanupWorkspace(ws)` を呼ぶ (DRY_RUN分岐は無い。読み取り専用でありコードを残す意味が無いため)
+- `webhook/src/routes/jobs.ts`
+  - `POST /investigate` を追加。`IssueRefSchema` をそのまま流用し、`jobLocks.acquire(ref, job.id, false)` (issue単位のみ、`convert` と同じ)
+- `userscript/src/gm-client.ts`
+  - `investigate(ref)` を追加 (`POST /investigate` を叩く)
+- `userscript/src/ui/panel.ts`
+  - issueKind (#2で追加) が `"bug"` のときのみ「調査を実行」ボタンを表示し、`investigate()` を呼ぶ
 
-各テンプレートに以下の固定ラベルを自動付与する。
+### プロンプト設計の方針
 
-- バグ報告用テンプレート → ラベル `type:bug`
-- 機能要望用テンプレート → ラベル `type:feature`
-- タスク用テンプレート → ラベル `type:task`
-
-ラベルを目印に選ぶ理由:
-
-- issue本文やコメントの書き換えでは失われない (issue自体の属性である)
-- GitHub UI・API (`labels` フィールド) の両方から取得でき、userscript・webhook のどちらからも参照しやすい
-- `webhook/src/markers.ts` が担う「コメント種別のマーカー」とは別レイヤーの関心事であり、既存の仕組みと衝突しない
-
-### userscript側の変更
-
-- 種類判別ロジックを新設する (`userscript/src/issue-kind.ts` 等)
-  - `issueKind(labels: string[]): "bug" | "feature" | "task"` — labels配列から `type:bug` / `type:feature` を検出し、どちらも無ければ `"task"` を返す (既存issueとの後方互換のデフォルト)
-  - 両方のラベルが同時に付与されている異常系では、`type:bug` を優先する (バグ報告の調査結果反映を優先させたいため) と定め、実装をこれに合わせる
-- labelsはGitHubのissueページDOM (サイドバーの Labels セクション) から取得する。`userscript/src/main.ts` の `mount()` 内で1度だけ読み取り、`issueKind` の結果を `ui/panel.ts` の `buildPanel()` に渡す
-- パネル (`userscript/src/ui/panel.ts`) は種類に応じて表示するボタンを切り替える
-  - `task` → 既存の「フォーマット作成 / Allium生成 / LikeC4生成 / Superpowers生成 / すべて生成 / PRを作成」
-  - `bug` → #3 で実装する調査ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-  - `feature` → #4 で実装する質問ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-
-### webhook側の変更
-
-- 本issueのスコープではwebhookのAPI・ジョブロジックへの変更はない (テンプレート追加とラベル付与はGitHub側の設定のみで完結するため)
-- #3・#4 の実装時、webhookのエンドポイントが対象issueの `labels` をGitHub APIから読み取り種類に応じた処理を分岐する際にも、同じラベル名 (`type:bug` / `type:feature` / `type:task`) を参照する前提とする
+`convert.ts` 系と同様、claude cliには `tools: []` ではなく `["Read","Grep","Glob"]` を渡し、実際に対象リポジトリのコードを読ませたうえで根拠付きの回答をさせる。`createPr.ts` のように `disallowedTools` で `Bash(git push:*)` 等を明示的に塞ぐ必要はない (`Bash` 自体を許可リストに含めないため)。

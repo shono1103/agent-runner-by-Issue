@@ -4,6 +4,7 @@ import type {
   ConvertRequest,
   CreatePrRequest,
   HealthResponse,
+  InvestigateRequest,
   JobConflictResponse,
   JobStartResponse,
   JobStatusResponse,
@@ -128,6 +129,10 @@ export async function postConvert(req: ConvertRequest): Promise<JobLaunchResult>
 
 export async function postCreatePr(req: CreatePrRequest): Promise<JobLaunchResult> {
   return postJobStart("/api/jobs/create-pr", req);
+}
+
+export async function investigate(req: InvestigateRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/investigate", req);
 }
 
 async function postJobStart(path: string, body: unknown): Promise<JobLaunchResult> {

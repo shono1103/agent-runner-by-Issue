@@ -1,26 +1,25 @@
 ## テスト定義
 
-### 静的検証
+### markers.ts
 
-- `.github/ISSUE_TEMPLATE/*.yml` がGitHubのIssue Formsスキーマとして妥当であること (3種類がissue作成画面の選択肢に表示されることを手動確認する)
-- 各テンプレートの `labels:` に `type:bug` / `type:feature` / `type:task` がそれぞれ1つだけ設定されていること
+- `buildGeneratedMarker("investigation", 1, 1)` が `<!-- agent-runner:generated:investigation:1/1 ... -->` を生成すること
+- `parseMarker()` が上記マーカーを `{ type: "generated", kind: "investigation", part: 1, total: 1 }` として正しくパースできること
 
-### userscript: `issueKind` 関数の単体テスト
+### prompts/investigate.ts
 
-入力: labels配列 (文字列の配列)
+- issue本文を渡したときに、systemPrompt/userPromptに本文の内容が含まれること
+- JSON Schemaが「原因箇所 (ファイルパス・行または関数名)」「根拠」「特定できなかった場合の代替フィールド」を持つこと
 
-- `["type:bug"]` → `"bug"`
-- `["type:feature"]` → `"feature"`
-- `["type:task"]` → `"task"`
-- `[]` (ラベルなし、テンプレート導入前の既存issue) → `"task"` (後方互換のデフォルト)
-- `["type:bug", "type:feature"]` (両方付与された異常系) → `"bug"` (アーキテクチャ定義で定めた優先順位)
-- 未知のラベルのみ (`["enhancement"]`) → `"task"`
+### jobs/investigate.ts (結合テスト、GitHub API・claude cliはモック)
+
+- 正常系: `runClaude` がファイルパスと根拠を含む構造化出力を返したとき、`upsertGeneratedComments` が `"investigation"` kindで呼ばれること
+- 再実行時: 既存の調査結果コメント (自分が投稿した `investigation` マーカー付き) がある状態で再実行すると、新規コメントが増えず既存コメントが更新されること (`upsertGeneratedComments` の既存挙動に委ねる)
+- 失敗系: `runClaude` が失敗を返したとき、ジョブが `failed` になり、コメントは投稿されないこと
+- clone後は成功・失敗どちらの経路でも `cleanupWorkspace` が呼ばれること (一時ディレクトリが残らないこと)
 
 ### 手動確認 (E2E)
 
-1. GitHubのissue作成画面で3種類のテンプレートが選択肢に表示される
-2. バグ報告テンプレートから作成したissueに `type:bug` ラベルが付与されている
-3. 機能要望テンプレートから作成したissueに `type:feature` ラベルが付与されている
-4. タスクテンプレートから作成したissueに `type:task` ラベルが付与されている
-5. 上記3つのissueをそれぞれuserscriptで開き、パネルが種類に応じた表示になっている (タスクは既存ボタン一式、バグ報告・機能要望はプレースホルダー)
-6. ラベルを持たない既存issue (テンプレート導入前に作成したもの) を開いても、従来通り「タスク」として扱われ、既存ボタンが表示される
+1. `type:bug` ラベルの付いたissueをuserscriptで開くと「調査を実行」ボタンが表示される
+2. 実行すると、原因箇所と根拠を含むコメントが新規投稿される
+3. 同じissueで再度実行すると、コメントが増えず、内容が更新される
+4. `type:bug` 以外のissueでは「調査を実行」ボタンが表示されない

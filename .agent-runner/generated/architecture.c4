@@ -1,67 +1,74 @@
 specification {
+  element actor
   element system
-  element container
   element component
 }
 
 model {
-  github = system 'GitHub' {
-    description 'Issue Forms とIssueページ (ラベル表示含む) を提供するプラットフォーム'
-
-    issueTemplates = container 'Issue Templates' {
-      description '.github/ISSUE_TEMPLATE 配下のIssue Forms定義。labels: フィールドで固定ラベルを自動付与する'
-
-      bugReportTemplate = component 'bug_report.yml' {
-        description 'バグ報告用テンプレート。作成時にラベル type:bug を自動付与'
-      }
-      featureRequestTemplate = component 'feature_request.yml' {
-        description '機能要望用テンプレート。作成時にラベル type:feature を自動付与'
-      }
-      taskTemplate = component 'task.yml' {
-        description 'タスク用テンプレート。作成時にラベル type:task を自動付与'
-      }
-      config = component 'config.yml' {
-        description 'blank_issues_enabled: false を設定し、テンプレート経由の作成を必須にする'
-      }
-    }
-
-    issuePage = container 'Issue ページ' {
-      description 'サイドバーのLabelsセクションに type:bug / type:feature / type:task が表示される'
-    }
-  }
-
-  githubApi = system 'GitHub API' {
-    description 'issueのlabelsフィールドをAPI経由でも提供する'
-  }
-
-  userscript = system 'userscript' {
-    description 'issueページ上でパネルを表示し、種類に応じたボタンを出し分ける拡張スクリプト'
-
-    main = component 'main.ts' {
-      description 'mount() 内でissueページDOMからlabelsを1度だけ読み取る'
-    }
-    issueKind = component 'issue-kind.ts' {
-      description 'issueKind(labels: string[]): "bug"|"feature"|"task" を判定。type:bug/type:feature双方あればtype:bug優先、どちらも無ければtask (後方互換デフォルト)'
-    }
-    panel = component 'ui/panel.ts' {
-      description 'buildPanel() が種類に応じて表示ボタンを切り替える。task→フォーマット作成/Allium生成/LikeC4生成/Superpowers生成/すべて生成/PRを作成。bug→調査ボタン(プレースホルダー、#3で実装)。feature→質問ボタン(プレースホルダー、#4で実装)'
-    }
-
-    main -> issueKind 'labels配列を渡して種類判定'
-    main -> panel 'issueKindの結果 (bug/feature/task) を渡す'
+  user = actor 'ユーザー' {
+    description 'GitHub Issueでバグ報告を行う'
   }
 
   webhook = system 'webhook' {
-    description '本issueのスコープでは変更なし。#3・#4実装時にGitHub APIからlabelsを読み取り種類分岐する際、同じラベル名を参照する前提'
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /investigate エンドポイント。IssueRefSchemaを検証し jobLocks.acquire(ref, job.id, false) でissue単位のロックを取得してジョブを起動する'
+    }
+
+    investigateJob = component 'jobs/investigate.ts' {
+      description 'runInvestigateJob(job, client, ref): issue本文取得→read-onlyでリポジトリclone→Claude CLIで調査→コメントupsert→finallyでworkspace cleanup。branch作成・commit・pushは行わない'
+    }
+
+    investigatePrompt = component 'prompts/investigate.ts' {
+      description 'buildInvestigatePrompt(issueBody): バグ報告issue本文から原因箇所・根拠・確認範囲を構造化出力させるsystemPrompt/userPromptとJSON Schemaを組み立てる'
+    }
+
+    apiTypes = component 'types/api.ts' {
+      description 'JobKindに"investigate"を追加、InvestigateRequest = IssueRefを追加'
+    }
 
     markers = component 'markers.ts' {
-      description '既存のコメント種別マーカー機能。ラベルによる種類判別とは別レイヤーの関心事'
+      description 'GENERATED_KINDSに"investigation"を追加。agent-runner:generated:investigation:1/1マーカーでupsertGeneratedComments/collectGeneratedArtifactの対象に載せる'
     }
+
+    git = component 'git.ts' {
+      description 'prepareGitWorkspace(owner, repo)によるread-only clone、cleanupWorkspace(ws)によるworkspace後片付けを提供する'
+    }
+
+    jobsRoute -> investigateJob 'ジョブを実行'
+    investigateJob -> apiTypes 'InvestigateRequest/JobKindを参照'
+    investigateJob -> investigatePrompt 'buildInvestigatePromptでprompt/JSON Schemaを取得'
+    investigateJob -> git 'prepareGitWorkspaceでclone, cleanupWorkspaceで後片付け'
+    investigateJob -> markers 'upsertGeneratedComments(client, ref, "investigation", body, existing) でコメント種別を指定'
   }
 
-  userscript.main -> github.issuePage 'issueページDOMのLabelsセクションを読み取る'
-  github.issueTemplates -> githubApi 'テンプレート経由のissue作成時にlabels:フィールドでラベルを自動付与'
-  webhook.markers -> githubApi 'labelsフィールドを読み取り種類に応じた処理を分岐 (#3・#4で実装予定)'
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。tools: ["Read","Grep","Glob"]のみ許可された調査専用構成 (Write/Edit/Bashは渡さない)。書き込み系ツールが無いためpermissionModeは指定しない'
+  }
+
+  github = system 'GitHub' {
+    description 'Issue本文・コメントの取得元。investigateJobからgetIssue()/upsertGeneratedCommentsで参照・更新される'
+  }
+
+  userscript = system 'userscript' {
+    description 'ブラウザ上でGitHub Issue画面に調査実行UIを追加するuserscript'
+
+    gmClient = component 'gm-client.ts' {
+      description 'investigate(ref)でPOST /investigateを呼ぶ'
+    }
+
+    panel = component 'ui/panel.ts' {
+      description 'issueKind (#2で追加) が"bug"のときのみ「調査を実行」ボタンを表示し、investigate()を呼ぶ'
+    }
+
+    panel -> gmClient 'investigate(ref)を呼ぶ'
+  }
+
+  user -> panel '「調査を実行」ボタンを押す (issueKindがbugのときのみ表示)'
+  gmClient -> jobsRoute 'POST /investigate'
+  investigateJob -> github 'getIssue()でissue本文取得、結果をコメントとしてupsert'
+  investigateJob -> claudeCli 'Read/Grep/Globのみで対象リポジトリのコードを読ませ、根拠付きの調査結果を依頼'
 }
 
 views {
@@ -70,21 +77,27 @@ views {
     include *
   }
 
-  view of github {
-    title 'GitHub側: Issue Formsとラベル付与'
+  view of webhook {
+    title 'webhook内部構成'
     include *
   }
 
   view of userscript {
-    title 'userscript内部: 種類判定とパネル切り替え'
+    title 'userscript内部構成'
     include *
   }
 
-  dynamic view issueKindFlow {
-    title '種類判定からパネル表示までの流れ'
-    userscript.main -> github.issuePage 'issueページDOMからlabelsを取得'
-    userscript.main -> userscript.issueKind 'labels配列を渡す'
-    userscript.issueKind -> userscript.main '"bug" | "feature" | "task" を返す (両方あればbug優先、無指定はtask)'
-    userscript.main -> userscript.panel '判定結果を渡し、種類に応じたボタンを表示させる'
+  dynamic view investigateFlow {
+    title '調査ジョブの実行フロー'
+    user -> panel 'issueKindがbugの場合「調査を実行」ボタンをクリック'
+    panel -> gmClient 'investigate(ref)を呼ぶ'
+    gmClient -> jobsRoute 'POST /investigate'
+    jobsRoute -> investigateJob 'jobLocks.acquire(ref, job.id, false)でロックを取得しジョブを実行'
+    investigateJob -> github 'getIssue()でissue本文取得'
+    investigateJob -> git 'prepareGitWorkspace(owner, repo)でread-only clone'
+    investigateJob -> investigatePrompt 'buildInvestigatePromptでprompt/JSON Schemaを構築'
+    investigateJob -> claudeCli 'tools: ["Read","Grep","Glob"]のみでコード調査を依頼'
+    investigateJob -> github 'upsertGeneratedComments(client, ref, "investigation", body, existing)でコメントに反映'
+    investigateJob -> git 'finallyでcleanupWorkspace(ws)を呼びworkspaceを削除'
   }
 }

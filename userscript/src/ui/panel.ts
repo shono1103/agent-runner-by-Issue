@@ -2,6 +2,7 @@ import type { ConvertTarget } from "@agent-runner/webhook/api-types";
 import {
   HttpError,
   getHealth,
+  investigate,
   pollJob,
   postConvert,
   postCreatePr,
@@ -25,10 +26,9 @@ const TARGET_LABELS: Record<ConvertTarget, string> = {
   superpowers: "Superpowers 生成",
 };
 
-// bug / feature 用のボタンはそれぞれ #3 / #4 のスコープで実装する。
-// 本issue (#2) の時点ではプレースホルダーの説明文のみを表示する。
-const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task">, string> = {
-  bug: "調査 (準備中: #3 で実装予定)",
+// feature 用のボタンは #4 のスコープで実装する。
+// 本issue (#3) の時点では bug のみ実装し、feature はプレースホルダーの説明文のみを表示する。
+const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task" | "bug">, string> = {
   feature: "質問 (準備中: #4 で実装予定)",
 };
 
@@ -136,7 +136,8 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
         appendLog(`${jobLabel}: 開始 (jobId=${launched.jobId})`);
       }
 
-      const totalTimeoutMs = jobLabel === "PR 作成" ? 40 * 60_000 : 5 * 60_000;
+      const totalTimeoutMs =
+        jobLabel === "PR 作成" ? 40 * 60_000 : jobLabel === "調査" ? 15 * 60_000 : 5 * 60_000;
       const result = await pollJob(launched.jobId, {
         signal: controller.signal,
         totalTimeoutMs,
@@ -250,8 +251,21 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       if (!ok) return;
       void withJob("PR 作成", () => postCreatePr(issue));
     });
+  } else if (kind === "bug") {
+    // bug 種別: type:bug ラベルの付いた issue に対する原因調査を実行する。
+    const investigateRow = document.createElement("div");
+    investigateRow.className = "row";
+    const investigateBtn = mkButton("調査を実行", "action");
+    investigateRow.append(investigateBtn);
+
+    body.append(investigateRow, status, log);
+    allButtons.push(investigateBtn);
+
+    investigateBtn.addEventListener("click", () => {
+      void withJob("調査", () => investigate(issue));
+    });
   } else {
-    // bug / feature 種別: 対応する機能 (#3 / #4) 実装までのプレースホルダー表示。
+    // feature 種別: 対応する機能 (#4) 実装までのプレースホルダー表示。
     const placeholderLabel = document.createElement("div");
     placeholderLabel.className = "section-label";
     placeholderLabel.textContent = PLACEHOLDER_TEXT[kind];
