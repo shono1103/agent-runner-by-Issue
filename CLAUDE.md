@@ -31,6 +31,11 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   (テストは `.env.test` を指している)。
 * `.env` を書き換えたら webhook を**再起動**する。プロセスは起動時の値を握ったままで、
   `/api/health` の `dryRun` にも古い値が出続ける。
+* PR 作成ジョブが書き出す仕様の置き場所は `.agent-runner/issues/<issue番号>/` で、
+  パスの定義は `webhook/src/spec-dir.ts` の `specDirFor()` の1箇所だけ。
+  `.agent-runner/source` / `.agent-runner/generated` 固定に戻さないこと
+  (別 issue のPR同士が必ず衝突し、先にマージされた仕様が次の create-pr で消えるため)。
+  `webhook/src/prompts/implement.ts` の参照先も `specDirFor()` から組み立てる。
 * userscript から webhook を叩くのは `GM_xmlhttpRequest` のみ。GitHub の CSP
   (`connect-src` に localhost が無い) により素の `fetch` は使えない。
 
