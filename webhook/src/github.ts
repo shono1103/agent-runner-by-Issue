@@ -238,6 +238,57 @@ export async function getDefaultBranch(
   return data.default_branch;
 }
 
+export type OpenPrRef = {
+  number: number;
+  branch: string;
+};
+
+/**
+ * 対象issueに対応するOPENなPRを検索する。
+ * head ブランチ名が `agent-runner/issue-<N>-` で始まる、または本文に `Closes #<N>` を
+ * 含むものを対象とする。複数該当した場合は PR番号が最も大きい (最新の) ものを採用する。
+ */
+export async function findOpenPrForIssue(
+  client: GithubClient,
+  ref: IssueRef,
+): Promise<OpenPrRef | null> {
+  const prs = await client.octokit.paginate(client.octokit.rest.pulls.list, {
+    owner: ref.owner,
+    repo: ref.repo,
+    state: "open",
+    per_page: 100,
+  });
+
+  const branchPrefix = `agent-runner/issue-${ref.issueNumber}-`;
+  const closesRe = new RegExp(`\\bCloses\\s+#${ref.issueNumber}\\b`, "i");
+
+  const matches = prs.filter((pr) => {
+    const head = pr.head?.ref ?? "";
+    if (head.startsWith(branchPrefix)) return true;
+    return closesRe.test(pr.body ?? "");
+  });
+
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => b.number - a.number);
+  const latest = matches[0]!;
+  return { number: latest.number, branch: latest.head.ref };
+}
+
+/** 単一PRの `mergeable` 状態を取得する。GitHub が計算中の場合は null になりうる。 */
+export async function getPullRequestMergeable(
+  client: GithubClient,
+  ref: IssueRef,
+  prNumber: number,
+): Promise<boolean | null> {
+  const { data } = await client.octokit.rest.pulls.get({
+    owner: ref.owner,
+    repo: ref.repo,
+    pull_number: prNumber,
+  });
+  return data.mergeable ?? null;
+}
+
 export type GeneratedArtifact = {
   /** コードフェンスの中身だけを取り出したもの (実装ジョブで .allium 等として書き出す用)。 */
   code: string;

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../config.ts";
+import { specDirFor } from "../spec-dir.ts";
 import { runClaude } from "../claude/run-claude.ts";
 import {
   changedFiles,
@@ -77,7 +78,7 @@ export async function runCreatePrJob(job: Job, client: GithubClient, ref: IssueR
     await createBranch(ws, branch);
 
     jobStore.setPhase(job.id, "仕様ファイルを書き出し中");
-    const specDir = join(ws.cloneDir, ".agent-runner");
+    const specDir = join(ws.cloneDir, specDirFor(ref.issueNumber));
     await mkdir(join(specDir, "source"), { recursive: true });
     await mkdir(join(specDir, "generated"), { recursive: true });
     await writeFile(join(specDir, "source", "requirements.md"), required.values.requirements, "utf8");

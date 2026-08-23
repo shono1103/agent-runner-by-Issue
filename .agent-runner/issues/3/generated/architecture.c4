@@ -1,0 +1,103 @@
+specification {
+  element actor
+  element system
+  element component
+}
+
+model {
+  user = actor 'ユーザー' {
+    description 'GitHub Issueでバグ報告を行う'
+  }
+
+  webhook = system 'webhook' {
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /investigate エンドポイント。IssueRefSchemaを検証し jobLocks.acquire(ref, job.id, false) でissue単位のロックを取得してジョブを起動する'
+    }
+
+    investigateJob = component 'jobs/investigate.ts' {
+      description 'runInvestigateJob(job, client, ref): issue本文取得→read-onlyでリポジトリclone→Claude CLIで調査→コメントupsert→finallyでworkspace cleanup。branch作成・commit・pushは行わない'
+    }
+
+    investigatePrompt = component 'prompts/investigate.ts' {
+      description 'buildInvestigatePrompt(issueBody): バグ報告issue本文から原因箇所・根拠・確認範囲を構造化出力させるsystemPrompt/userPromptとJSON Schemaを組み立てる'
+    }
+
+    apiTypes = component 'types/api.ts' {
+      description 'JobKindに"investigate"を追加、InvestigateRequest = IssueRefを追加'
+    }
+
+    markers = component 'markers.ts' {
+      description 'GENERATED_KINDSに"investigation"を追加。agent-runner:generated:investigation:1/1マーカーでupsertGeneratedComments/collectGeneratedArtifactの対象に載せる'
+    }
+
+    git = component 'git.ts' {
+      description 'prepareGitWorkspace(owner, repo)によるread-only clone、cleanupWorkspace(ws)によるworkspace後片付けを提供する'
+    }
+
+    jobsRoute -> investigateJob 'ジョブを実行'
+    investigateJob -> apiTypes 'InvestigateRequest/JobKindを参照'
+    investigateJob -> investigatePrompt 'buildInvestigatePromptでprompt/JSON Schemaを取得'
+    investigateJob -> git 'prepareGitWorkspaceでclone, cleanupWorkspaceで後片付け'
+    investigateJob -> markers 'upsertGeneratedComments(client, ref, "investigation", body, existing) でコメント種別を指定'
+  }
+
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。tools: ["Read","Grep","Glob"]のみ許可された調査専用構成 (Write/Edit/Bashは渡さない)。書き込み系ツールが無いためpermissionModeは指定しない'
+  }
+
+  github = system 'GitHub' {
+    description 'Issue本文・コメントの取得元。investigateJobからgetIssue()/upsertGeneratedCommentsで参照・更新される'
+  }
+
+  userscript = system 'userscript' {
+    description 'ブラウザ上でGitHub Issue画面に調査実行UIを追加するuserscript'
+
+    gmClient = component 'gm-client.ts' {
+      description 'investigate(ref)でPOST /investigateを呼ぶ'
+    }
+
+    panel = component 'ui/panel.ts' {
+      description 'issueKind (#2で追加) が"bug"のときのみ「調査を実行」ボタンを表示し、investigate()を呼ぶ'
+    }
+
+    panel -> gmClient 'investigate(ref)を呼ぶ'
+  }
+
+  user -> panel '「調査を実行」ボタンを押す (issueKindがbugのときのみ表示)'
+  gmClient -> jobsRoute 'POST /investigate'
+  investigateJob -> github 'getIssue()でissue本文取得、結果をコメントとしてupsert'
+  investigateJob -> claudeCli 'Read/Grep/Globのみで対象リポジトリのコードを読ませ、根拠付きの調査結果を依頼'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of webhook {
+    title 'webhook内部構成'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript内部構成'
+    include *
+  }
+
+  dynamic view investigateFlow {
+    title '調査ジョブの実行フロー'
+    user -> panel 'issueKindがbugの場合「調査を実行」ボタンをクリック'
+    panel -> gmClient 'investigate(ref)を呼ぶ'
+    gmClient -> jobsRoute 'POST /investigate'
+    jobsRoute -> investigateJob 'jobLocks.acquire(ref, job.id, false)でロックを取得しジョブを実行'
+    investigateJob -> github 'getIssue()でissue本文取得'
+    investigateJob -> git 'prepareGitWorkspace(owner, repo)でread-only clone'
+    investigateJob -> investigatePrompt 'buildInvestigatePromptでprompt/JSON Schemaを構築'
+    investigateJob -> claudeCli 'tools: ["Read","Grep","Glob"]のみでコード調査を依頼'
+    investigateJob -> github 'upsertGeneratedComments(client, ref, "investigation", body, existing)でコメントに反映'
+    investigateJob -> git 'finallyでcleanupWorkspace(ws)を呼びworkspaceを削除'
+  }
+}

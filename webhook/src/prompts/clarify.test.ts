@@ -19,13 +19,14 @@ test("buildClarifyPrompt: previousQa がある場合、その内容 (人間の�
 
 test("buildClarifyPrompt: schema が questions (text, resolved を持つ配列) と allResolved を持つ", () => {
   const { schema } = buildClarifyPrompt("issue本文", null);
-  const s = schema as {
+  // schema は as const 相当の readonly 構造なので、mutable 型へ直接 as できない。
+  const s = schema as unknown as {
     type: string;
     properties: {
       questions: { type: string; items: { properties: { text: unknown; resolved: unknown } } };
       allResolved: { type: string };
     };
-    required: string[];
+    required: readonly string[];
   };
 
   assert.equal(s.type, "object");
