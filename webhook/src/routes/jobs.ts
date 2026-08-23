@@ -4,6 +4,7 @@ import { config } from "../config.ts";
 import { createGithubClient } from "../github.ts";
 import { runConvertJob } from "../jobs/convert.ts";
 import { runCreatePrJob } from "../jobs/createPr.ts";
+import { runDraftJob } from "../jobs/draft.ts";
 import { jobStore } from "../jobs/store.ts";
 import { jobLocks } from "../locks.ts";
 import type {
@@ -55,6 +56,37 @@ jobsRoute.post("/convert", async (c) => {
 
   const client = await createGithubClient(config.githubToken);
   runConvertJob(job, client, ref, targets).finally(() => jobLocks.release(ref, false));
+
+  return c.json<JobStartResponse>({ jobId: job.id }, 202);
+});
+
+jobsRoute.post("/draft", async (c) => {
+  const json = await c.req.json().catch(() => null);
+  const parsed = IssueRefSchema.safeParse(json);
+  if (!parsed.success) {
+    return c.json<ApiErrorResponse>(
+      { error: "invalid_request", message: parsed.error.message },
+      400,
+    );
+  }
+  const ref: IssueRef = parsed.data;
+
+  const job = jobStore.create("draft");
+  const acquired = jobLocks.acquire(ref, job.id, false);
+  if (!acquired) {
+    const holder = jobLocks.holderOf(ref, false);
+    return c.json<JobConflictResponse>(
+      {
+        error: "locked",
+        jobId: holder ?? job.id,
+        message: "この Issue に対するジョブが既に実行中です",
+      },
+      409,
+    );
+  }
+
+  const client = await createGithubClient(config.githubToken);
+  runDraftJob(job, client, ref).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
 });

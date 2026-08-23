@@ -23,7 +23,9 @@ export type ConvertRequest = IssueRef & {
 
 export type CreatePrRequest = IssueRef;
 
-export type JobKind = "convert" | "create-pr";
+export type DraftRequest = IssueRef;
+
+export type JobKind = "convert" | "create-pr" | "draft";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JobStartResponse = {

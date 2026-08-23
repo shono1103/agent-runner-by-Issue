@@ -1,36 +1,131 @@
 -- allium: 3
 
--- issueの種類 (バグ報告 / 機能要望 / タスク) を、GitHub Issueに付与されたラベルから
--- 機械的に判別できるようにする。issue本文の書き換えやコメント追加では失われない
--- 目印として、ラベルを採用する。
+-- issueのタイトル・本文のみを入力として、要件定義/システムアーキテクチャ定義/テスト定義の
+-- 3つのsourceコメントをclaude cliに自動ドラフトさせ投稿する draft ジョブの振る舞いを定義する。
+-- 既存の convert ジョブ (source→EaC) とは入力の向きが逆 (issue本文→source) であり、
+-- 既に存在するsourceコメント (投稿者は問わない) は上書きせず、不足しているkindのみを補う。
 
-enum IssueKind { bug | feature | task }
+enum SourceKind { requirements | architecture | tests }
+enum JobKind { convert | draft }
 
--- Issue および Label はGitHub側で管理される (external)
 external entity Issue {
-    labels: Label with issue = this
-
-    -- issueKind は built-in ではないブラックボックス関数。
-    -- 優先順位: type:bug > type:feature > type:task
-    -- 該当ラベルが無い場合 (テンプレート導入前の既存issue、未知ラベルのみの場合を含む)
-    -- は task をデフォルトとする (後方互換)
-    kind: issueKind(labels)
-
-    -- バグ報告テンプレートに由来する項目 (kind = bug のときのみ存在)
-    reproduction_steps: String when kind = bug   -- 再現手順
-    expected_behavior: String when kind = bug    -- 期待する動作
-    actual_behavior: String when kind = bug      -- 実際の動作
-
-    -- 機能要望テンプレートに由来する項目 (kind = feature のときのみ存在)
-    desired_outcome: String when kind = feature  -- 実現したいこと
-    background: String when kind = feature       -- 背景・目的
-
-    -- kind = task の場合、追加項目は無い。運用上、この後issueに
-    -- 要件定義 / システムアーキテクチャ定義 / テスト定義の3コメントが
-    -- 別途投稿される想定だが、テンプレート自体はそれを自動投稿しない。
+    number: Integer
+    title: String
+    body: String
+    source_comments: SourceComment with issue = this
+    requirements_comments: source_comments where kind = requirements
+    architecture_comments: source_comments where kind = architecture
+    tests_comments: source_comments where kind = tests
+    has_requirements: requirements_comments.count > 0
+    has_architecture: architecture_comments.count > 0
+    has_tests: tests_comments.count > 0
+    all_sources_present: has_requirements and has_architecture and has_tests
+    jobs: Job with issue = this
+    is_locked: jobs.any(j => j.status = running)
 }
 
-external entity Label {
+entity Job {
     issue: Issue
-    name: String  -- 例: "type:bug" | "type:feature" | "type:task" | その他任意の既存ラベル
+    kind: JobKind
+    status: pending | running | succeeded | failed
+    reads_repository_code: Boolean          -- draftジョブは常にfalse (issue本文のみを入力とする)
+
+    transitions status {
+        pending -> running
+        running -> succeeded
+        running -> failed
+        terminal: succeeded
+        terminal: failed
+    }
 }
+
+entity SourceComment {
+    issue: Issue
+    kind: SourceKind
+    generated_by: Job                       -- このコメントを投稿した draft ジョブ
+}
+
+rule StartDraft {
+    when: RunDraft(issue)
+    requires: not issue.is_locked
+    ensures:
+        Job.created(issue: issue, kind: draft, status: running, reads_repository_code: false)
+}
+
+rule SkipDraftWhenAllSourcesExist {
+    when: job: Job.status transitions_to running
+    requires:
+        job.kind = draft
+        job.issue.all_sources_present = true
+    ensures:
+        job.status = succeeded
+}
+
+rule FillMissingRequirements {
+    when: DraftGenerated(job)
+    requires:
+        job.status = running
+        job.kind = draft
+        job.issue.has_requirements = false
+    ensures:
+        SourceComment.created(issue: job.issue, kind: requirements, generated_by: job)
+}
+
+rule FillMissingArchitecture {
+    when: DraftGenerated(job)
+    requires:
+        job.status = running
+        job.kind = draft
+        job.issue.has_architecture = false
+    ensures:
+        SourceComment.created(issue: job.issue, kind: architecture, generated_by: job)
+}
+
+rule FillMissingTests {
+    when: DraftGenerated(job)
+    requires:
+        job.status = running
+        job.kind = draft
+        job.issue.has_tests = false
+    ensures:
+        SourceComment.created(issue: job.issue, kind: tests, generated_by: job)
+}
+
+rule CompleteDraft {
+    when: DraftGenerated(job)
+    requires:
+        job.status = running
+        job.kind = draft
+    ensures:
+        job.status = succeeded
+}
+
+rule FailDraft {
+    when: DraftFailed(job)
+    requires:
+        job.status = running
+        job.kind = draft
+    ensures:
+        job.status = failed
+}
+
+invariant AtMostOneSourceCommentPerKind {
+    for issue in Issues:
+        issue.requirements_comments.count <= 1
+        issue.architecture_comments.count <= 1
+        issue.tests_comments.count <= 1
+}
+
+invariant DraftJobsNeverReadRepositoryCode {
+    for job in Jobs where kind = draft:
+        job.reads_repository_code = false
+}
+
+actor Maintainer {}
+
+surface DraftButton {
+    actor: Maintainer
+    triggers: RunDraft(issue)
+}
+
+open question "type:bug / type:feature 等のissueラベルによって、draftジョブの出力内容 (再現手順重視 or 実現したいこと重視 等) を出し分けるかどうかは未確定"

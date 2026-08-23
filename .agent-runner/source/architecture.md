@@ -1,40 +1,35 @@
 ## システムアーキテクチャ定義
 
-### 配置
+### 全体像
 
-- `.github/ISSUE_TEMPLATE/bug_report.yml`
-- `.github/ISSUE_TEMPLATE/feature_request.yml`
-- `.github/ISSUE_TEMPLATE/task.yml`
-- `.github/ISSUE_TEMPLATE/config.yml` (`blank_issues_enabled: false` にしてテンプレート経由の作成を必須にする)
+既存の `convert` ジョブ (`webhook/src/jobs/convert.ts`) は「source3コメントを読む → claude cliで変換 → `upsertGeneratedComments` で生成コメントに反映」という一直線の処理を行う。`draft` ジョブはその入力側を担う対のジョブであり、「issueのタイトル・本文を読む → claude cliで3種のsource文書を生成 → sourceコメントとして投稿」を行う。`webhook/src/github.ts` の `ensureScaffoldComments` (空プレースホルダーを、まだ存在しないkindだけ作る仕組み) と同じ「既存を上書きしない」判断基準をそのまま流用し、プレースホルダーの代わりに実際に生成した本文を差し込む形にする。
 
-GitHubのIssue Forms (`.yml` 形式) を採用する。Markdownテンプレートではなく Issue Forms を選ぶ理由は、`labels:` フィールドでissue作成時に固定ラベルを自動付与でき、これを種類判別の目印として使えるため。
+### 追加・変更するファイル
 
-### 種類判別の目印
+- `webhook/src/types/api.ts`
+  - `JobKind` に `"draft"` を追加する (`"convert" | "create-pr" | "draft"`)
+  - `DraftRequest = IssueRef` を追加する (入力はissue参照のみ。title/bodyはジョブ内部で `getIssue()` により取得する)
+- `webhook/src/prompts/draft.ts` (新規)
+  - `buildDraftPrompt(input: { title: string; body: string })`: issueのタイトル・本文を渡し、要件定義/システムアーキテクチャ定義/テスト定義の3つの本文 (`markers.ts` の `buildScaffoldBody` が持つ見出し `## 要件定義` 等の構造はそのままに、プレースホルダー部分を実文書に差し替えたもの) を、1回のclaude cli呼び出しでまとめて構造化出力させる (`prompts/convert.ts` の `buildConvertPrompt` と対になる構成)。systemPromptには「3文書間で用語・粒度に矛盾がないよう配慮する」旨を含める (`convert.ts` の `CROSS_FORMAT_NOTE` と同様の考え方)
+  - `DRAFT_JSON_SCHEMA`: `{ requirements: string, architecture: string, tests: string }` の3フィールドを持つ (`markers.ts` の `SOURCE_KINDS` に対応させる)
+- `webhook/src/jobs/draft.ts` (新規)
+  - `runDraftJob(job, client, ref)`
+  - `getIssue(client, ref)` でissueのtitle/bodyを取得する
+  - `listIssueComments(client, ref)` で既存コメントを取得し、`SOURCE_KINDS` それぞれについて既にsourceコメント (投稿者は問わない) が存在するかを `parseMarker` で判定する
+  - 3種すべて既に存在する場合はclaude cliを呼ばず即座に完了する (無駄なコスト消費を避ける)
+  - 1種以上が未投稿の場合のみ `buildDraftPrompt` を呼び、未投稿のkindについて `buildSourceMarker(kind)` + 生成文書からコメント本文を組み立て、`createIssueComment` で新規投稿する。既に存在するkindはスキップする (`ensureScaffoldComments` と同じ判断基準を流用することで、要件定義の「増殖しない」「人間の編集を尊重する」を両立する)
+- `webhook/src/routes/jobs.ts`
+  - `POST /draft` を追加する。`IssueRefSchema` をそのまま流用し、`jobLocks.acquire(ref, job.id, false)` でissue単位のみロックする (`convert` と同じ。リポジトリ単位ロックは取らない)
+- `userscript/src/gm-client.ts`
+  - `postDraft(req: DraftRequest): Promise<JobLaunchResult>` を追加する (`postConvert` と同様に `postJobStart("/api/jobs/draft", req)` を呼ぶだけ)
+- `userscript/src/ui/panel.ts`
+  - `convertRow` (既存の「変換」セクション。`alliumBtn` `likec4Btn` `superpowersBtn` `allBtn` が並ぶ行) に `draftBtn = mkButton("定義書作成", "action")` を追加し、`allBtn` の隣に配置する。個別フォーマット用ボタンに対応する `draft` 版 (「要件定義だけ作成」等) は追加しない
+  - `draftBtn` のクリックハンドラは `withJob("定義書作成", () => postDraft(issue))` とする (他ボタンと同じ `withJob` ラッパーに乗せ、ポーリング・エラー表示・busy制御を再利用する)
 
-各テンプレートに以下の固定ラベルを自動付与する。
+### 既存コンポーネントとの接続
 
-- バグ報告用テンプレート → ラベル `type:bug`
-- 機能要望用テンプレート → ラベル `type:feature`
-- タスク用テンプレート → ラベル `type:task`
+`draft` → (source3コメント) → `convert` → (Allium/LikeC4/Superpowers) という一直線のパイプラインになる。`draft` ジョブが投稿するコメント本文は `markers.ts` の `buildSourceMarker` によるマーカー形式に完全準拠させるため、`convert` ジョブ側 (`extractSections`, `requireSections`) は無変更で動作する。
 
-ラベルを目印に選ぶ理由:
+### Open Questions
 
-- issue本文やコメントの書き換えでは失われない (issue自体の属性である)
-- GitHub UI・API (`labels` フィールド) の両方から取得でき、userscript・webhook のどちらからも参照しやすい
-- `webhook/src/markers.ts` が担う「コメント種別のマーカー」とは別レイヤーの関心事であり、既存の仕組みと衝突しない
-
-### userscript側の変更
-
-- 種類判別ロジックを新設する (`userscript/src/issue-kind.ts` 等)
-  - `issueKind(labels: string[]): "bug" | "feature" | "task"` — labels配列から `type:bug` / `type:feature` を検出し、どちらも無ければ `"task"` を返す (既存issueとの後方互換のデフォルト)
-  - 両方のラベルが同時に付与されている異常系では、`type:bug` を優先する (バグ報告の調査結果反映を優先させたいため) と定め、実装をこれに合わせる
-- labelsはGitHubのissueページDOM (サイドバーの Labels セクション) から取得する。`userscript/src/main.ts` の `mount()` 内で1度だけ読み取り、`issueKind` の結果を `ui/panel.ts` の `buildPanel()` に渡す
-- パネル (`userscript/src/ui/panel.ts`) は種類に応じて表示するボタンを切り替える
-  - `task` → 既存の「フォーマット作成 / Allium生成 / LikeC4生成 / Superpowers生成 / すべて生成 / PRを作成」
-  - `bug` → #3 で実装する調査ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-  - `feature` → #4 で実装する質問ボタン (本issueのスコープ外。今回はボタン非表示のプレースホルダーのみ用意する)
-
-### webhook側の変更
-
-- 本issueのスコープではwebhookのAPI・ジョブロジックへの変更はない (テンプレート追加とラベル付与はGitHub側の設定のみで完結するため)
-- #3・#4 の実装時、webhookのエンドポイントが対象issueの `labels` をGitHub APIから読み取り種類に応じた処理を分岐する際にも、同じラベル名 (`type:bug` / `type:feature` / `type:task`) を参照する前提とする
+- ラベル (`type:bug` 等) による `buildDraftPrompt` の出し分けを行う場合、`prompts/draft.ts` にラベル一覧を渡す引数を追加する必要があるが、要件定義側のOpen Questionが未確定のため、本アーキテクチャ定義では引数を追加しない最小構成としている

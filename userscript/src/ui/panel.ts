@@ -5,6 +5,7 @@ import {
   pollJob,
   postConvert,
   postCreatePr,
+  postDraft,
   postScaffold,
   type JobLaunchResult,
 } from "../gm-client.ts";
@@ -193,7 +194,8 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     const likec4Btn = mkButton(TARGET_LABELS.likec4, "action");
     const superpowersBtn = mkButton(TARGET_LABELS.superpowers, "action");
     const allBtn = mkButton("すべて生成", "action");
-    convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn);
+    const draftBtn = mkButton("定義書作成", "action");
+    convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn, draftBtn);
 
     const prLabel = document.createElement("div");
     prLabel.className = "section-label";
@@ -204,7 +206,7 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     prRow.append(prBtn);
 
     body.append(scaffoldRow, convertLabel, convertRow, prLabel, prRow, status, log);
-    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn);
+    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, draftBtn, prBtn);
 
     scaffoldBtn.addEventListener("click", () => {
       void (async () => {
@@ -241,6 +243,9 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       void withJob("全形式変換", () =>
         postConvert({ ...issue, targets: ["allium", "likec4", "superpowers"] }),
       );
+    });
+    draftBtn.addEventListener("click", () => {
+      void withJob("定義書作成", () => postDraft(issue));
     });
 
     prBtn.addEventListener("click", () => {
