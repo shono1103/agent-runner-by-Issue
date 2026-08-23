@@ -1,26 +1,20 @@
 ## テスト定義
 
-### 静的検証
+### location.ts: `isSubIssueOverlayOpen()`
 
-- `.github/ISSUE_TEMPLATE/*.yml` がGitHubのIssue Formsスキーマとして妥当であること (3種類がissue作成画面の選択肢に表示されることを手動確認する)
-- 各テンプレートの `labels:` に `type:bug` / `type:feature` / `type:task` がそれぞれ1つだけ設定されていること
+- 重なり表示に対応するDOM要素が存在するとき `true` を返すこと
+- 通常のissue単体表示 (該当要素が存在しない) のとき `false` を返すこと
+- 誤検知の確認: ラベル編集や担当者選択など、Sub-issue以外のdialog/popoverが開いている状態では `false` を返すこと (Sub-issue表示に特有のセレクタで判定できていることの確認)
 
-### userscript: `issueKind` 関数の単体テスト
+### main.ts: `sync()` の分岐
 
-入力: labels配列 (文字列の配列)
-
-- `["type:bug"]` → `"bug"`
-- `["type:feature"]` → `"feature"`
-- `["type:task"]` → `"task"`
-- `[]` (ラベルなし、テンプレート導入前の既存issue) → `"task"` (後方互換のデフォルト)
-- `["type:bug", "type:feature"]` (両方付与された異常系) → `"bug"` (アーキテクチャ定義で定めた優先順位)
-- 未知のラベルのみ (`["enhancement"]`) → `"task"`
+- `isSubIssueOverlayOpen()` が `true` のとき、`mount()` が呼ばれず、既にマウント済みであれば `unmount()` が呼ばれること (パネルがDOMから消えること)
+- `isSubIssueOverlayOpen()` が `false` のとき、既存通りの挙動 (issueに応じたマウント/切り替え) になること
+- 重なり表示 → 解消の遷移で、パネルが再度表示されること
 
 ### 手動確認 (E2E)
 
-1. GitHubのissue作成画面で3種類のテンプレートが選択肢に表示される
-2. バグ報告テンプレートから作成したissueに `type:bug` ラベルが付与されている
-3. 機能要望テンプレートから作成したissueに `type:feature` ラベルが付与されている
-4. タスクテンプレートから作成したissueに `type:task` ラベルが付与されている
-5. 上記3つのissueをそれぞれuserscriptで開き、パネルが種類に応じた表示になっている (タスクは既存ボタン一式、バグ報告・機能要望はプレースホルダー)
-6. ラベルを持たない既存issue (テンプレート導入前に作成したもの) を開いても、従来通り「タスク」として扱われ、既存ボタンが表示される
+1. 通常のissueページではパネルが表示される
+2. 親issueのSub-issues一覧から子issueをクリックし、重なった表示になったらパネルが消えること
+3. 重なり表示を閉じて通常のissue単体表示に戻ると、パネルが再度表示されること
+4. ラベル編集などSub-issue以外のdialog/popoverを開いてもパネルが消えないこと (誤検知しないこと)
