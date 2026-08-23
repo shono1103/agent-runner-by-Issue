@@ -1,10 +1,41 @@
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { loadEnvFile } from "./env-file.ts";
 
+/**
+ * 環境変数の読み込みは、この下の loadConfig(process.env) より必ず先に行う。
+ * ファイルの値がプロセス環境変数より優先される (理由は env-file.ts を参照)。
+ */
+export const envFile = loadEnvFile();
+
+if (!envFile.loaded) {
+  console.warn(
+    `[env] ${envFile.path} が見つかりません。プロセス環境変数のみで起動を試みます。`,
+  );
+} else if (envFile.overridden.length > 0) {
+  console.warn(
+    `[env] プロセスに残っていた環境変数を ${envFile.path} の値で上書きしました: ` +
+      envFile.overridden.join(", "),
+  );
+}
+
+/**
+ * true / false のみを受け付ける。`ture` のような打ち間違いを黙って false 扱いすると、
+ * DRY_RUN のつもりが実際に push してしまうため、曖昧な値は起動時に落とす。
+ */
 const boolFromString = z
   .string()
   .default("true")
-  .transform((v) => v.trim().toLowerCase() === "true");
+  .transform((v, ctx) => {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0") return false;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `true / false のいずれかを指定してください (受け取った値: "${v}")`,
+    });
+    return z.NEVER;
+  });
 
 const GITHUB_TOKEN_SOURCES = ["gh", "pat"] as const;
 type GithubTokenSource = (typeof GITHUB_TOKEN_SOURCES)[number];
@@ -37,8 +68,12 @@ const EnvSchema = z.object({
   CLAUDE_MODEL: z.string().default("sonnet"),
   CONVERT_MAX_BUDGET_USD: z.coerce.number().positive().default(0.5),
   PR_MAX_BUDGET_USD: z.coerce.number().positive().default(5),
+  INVESTIGATE_MAX_BUDGET_USD: z.coerce.number().positive().default(1),
+  CLARIFY_MAX_BUDGET_USD: z.coerce.number().positive().default(0.3),
   CONVERT_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   PR_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
+  INVESTIGATE_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+  CLARIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export type Config = {
@@ -53,8 +88,12 @@ export type Config = {
   claudeModel: string;
   convertMaxBudgetUsd: number;
   prMaxBudgetUsd: number;
+  investigateMaxBudgetUsd: number;
+  clarifyMaxBudgetUsd: number;
   convertTimeoutMs: number;
   prTimeoutMs: number;
+  investigateTimeoutMs: number;
+  clarifyTimeoutMs: number;
 };
 
 /**
@@ -118,8 +157,12 @@ function loadConfig(env: NodeJS.ProcessEnv): Config {
     claudeModel: e.CLAUDE_MODEL,
     convertMaxBudgetUsd: e.CONVERT_MAX_BUDGET_USD,
     prMaxBudgetUsd: e.PR_MAX_BUDGET_USD,
+    investigateMaxBudgetUsd: e.INVESTIGATE_MAX_BUDGET_USD,
+    clarifyMaxBudgetUsd: e.CLARIFY_MAX_BUDGET_USD,
     convertTimeoutMs: e.CONVERT_TIMEOUT_MS,
     prTimeoutMs: e.PR_TIMEOUT_MS,
+    investigateTimeoutMs: e.INVESTIGATE_TIMEOUT_MS,
+    clarifyTimeoutMs: e.CLARIFY_TIMEOUT_MS,
   };
 }
 

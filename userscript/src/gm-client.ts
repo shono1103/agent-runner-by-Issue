@@ -1,9 +1,12 @@
 import { GM_xmlhttpRequest } from "$";
 import type {
   ApiErrorResponse,
+  ClarifyRequest,
   ConvertRequest,
   CreatePrRequest,
+  DraftRequest,
   HealthResponse,
+  InvestigateRequest,
   JobConflictResponse,
   JobStartResponse,
   JobStatusResponse,
@@ -157,6 +160,18 @@ export async function getPrStatus(ref: {
     path: `/api/issues/pr-status?${params.toString()}`,
     timeoutMs: 10_000,
   });
+}
+
+export async function investigate(req: InvestigateRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/investigate", req);
+}
+
+export async function postClarify(req: ClarifyRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/clarify", req);
+}
+
+export async function postDraft(req: DraftRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/draft", req);
 }
 
 /**

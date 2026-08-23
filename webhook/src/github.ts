@@ -214,13 +214,17 @@ export async function createPullRequest(
 export async function getIssue(
   client: GithubClient,
   ref: IssueRef,
-): Promise<{ title: string; body: string }> {
+): Promise<{ title: string; body: string; labels: string[] }> {
   const { data } = await client.octokit.rest.issues.get({
     owner: ref.owner,
     repo: ref.repo,
     issue_number: ref.issueNumber,
   });
-  return { title: data.title, body: data.body ?? "" };
+  return {
+    title: data.title,
+    body: data.body ?? "",
+    labels: (data.labels ?? []).map((l) => (typeof l === "string" ? l : (l.name ?? ""))),
+  };
 }
 
 export async function getDefaultBranch(

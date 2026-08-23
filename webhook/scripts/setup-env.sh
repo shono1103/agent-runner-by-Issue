@@ -157,6 +157,17 @@ host="${host:-$default_host}"
 read -r -p "PORT (既定: 8787): " port
 port="${port:-8787}"
 
+# --- AGENT_RUNNER_DRY_RUN ----------------------------------------------------
+echo
+echo "AGENT_RUNNER_DRY_RUN=true の間は PR 作成ジョブが git push / PR 作成を行わず、"
+echo "ブランチと差分だけをリモートの一時ディレクトリに残します。動作確認が済むまでは"
+echo "true のままにすることを推奨します。"
+read -r -p "AGENT_RUNNER_DRY_RUN を true にしますか? [Y/n]: " dry_run_choice
+case "$dry_run_choice" in
+  [Nn]*) dry_run="false" ;;
+  *) dry_run="true" ;;
+esac
+
 # --- 書き込み ----------------------------------------------------------------
 {
   echo "PORT=$port"
@@ -171,7 +182,7 @@ port="${port:-8787}"
   echo "BOT_NAME=agent-runner-bot"
   echo "BOT_EMAIL=agent-runner-bot@users.noreply.github.com"
   echo ""
-  echo "AGENT_RUNNER_DRY_RUN=true"
+  echo "AGENT_RUNNER_DRY_RUN=$dry_run"
   echo ""
   echo "CLAUDE_MODEL=sonnet"
   echo "CONVERT_MAX_BUDGET_USD=0.5"
@@ -183,11 +194,37 @@ chmod 600 "$ENV_FILE"
 
 echo
 echo "$ENV_FILE を作成しました (chmod 600)。"
-echo "AGENT_RUNNER_DRY_RUN=true のままです。動作確認できたら手動で false に変更してください。"
+if [[ "$dry_run" == "true" ]]; then
+  echo "AGENT_RUNNER_DRY_RUN=true です。動作確認できたら .env を編集し false に変更してください。"
+else
+  echo "AGENT_RUNNER_DRY_RUN=false です。PR 作成ジョブが実際に git push / PR 作成を行います。"
+fi
+
+# --- 常駐サービスへの反映 ----------------------------------------------------
+# .env を書き換えても、既に動いている webhook プロセスは古い値を握ったままになる。
+# (今の DRY_RUN が .env と食い違って見える、という混乱の主因)
+SERVICE_NAME="agent-runner-webhook"
+if command -v systemctl >/dev/null 2>&1 &&
+  systemctl --user list-unit-files "${SERVICE_NAME}.service" 2>/dev/null | grep -q "${SERVICE_NAME}.service"; then
+  echo
+  if systemctl --user is-active --quiet "${SERVICE_NAME}.service"; then
+    echo "常駐サービス ${SERVICE_NAME}.service が動作中です。新しい .env を反映するため再起動します。"
+    systemctl --user restart "${SERVICE_NAME}.service"
+    echo "[OK] 再起動しました。反映結果 (DRY_RUN と読み込んだ env ファイル) はログで確認できます:"
+    echo "    journalctl --user -u ${SERVICE_NAME}.service -n 20 --no-pager"
+  else
+    echo "[INFO] ${SERVICE_NAME}.service は停止中です。起動するには:"
+    echo "    systemctl --user start ${SERVICE_NAME}.service"
+  fi
+fi
+
 echo
 echo "依存関係のインストールと起動:"
 echo "    pnpm install"
 echo "    pnpm --filter webhook dev"
+echo
+echo "[注意] .env を書き換えたら、動いている webhook を必ず再起動すること"
+echo "       (プロセスは起動時の値を握ったままで、クライアントの疎通確認にも古い DRY_RUN が出る)。"
 echo
 if ! command -v claude >/dev/null 2>&1; then
   echo "[INFO] claude コマンドが見つかりません。PR 作成ジョブが claude cli を呼び出すため、別途インストール・ログインが必要です:" >&2

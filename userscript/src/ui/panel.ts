@@ -3,9 +3,12 @@ import {
   HttpError,
   getHealth,
   getPrStatus,
+  investigate,
   pollJob,
+  postClarify,
   postConvert,
   postCreatePr,
+  postDraft,
   postResolveConflicts,
   postScaffold,
   type JobLaunchResult,
@@ -25,13 +28,6 @@ const TARGET_LABELS: Record<ConvertTarget, string> = {
   allium: "Allium 生成",
   likec4: "LikeC4 生成",
   superpowers: "Superpowers 生成",
-};
-
-// bug / feature 用のボタンはそれぞれ #3 / #4 のスコープで実装する。
-// 本issue (#2) の時点ではプレースホルダーの説明文のみを表示する。
-const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task">, string> = {
-  bug: "調査 (準備中: #3 で実装予定)",
-  feature: "質問 (準備中: #4 で実装予定)",
 };
 
 function mkButton(label: string, className: string): HTMLButtonElement {
@@ -152,7 +148,8 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
         appendLog(`${jobLabel}: 開始 (jobId=${launched.jobId})`);
       }
 
-      const totalTimeoutMs = jobLabel === "PR 作成" ? 40 * 60_000 : 5 * 60_000;
+      const totalTimeoutMs =
+        jobLabel === "PR 作成" ? 40 * 60_000 : jobLabel === "調査" ? 15 * 60_000 : 5 * 60_000;
       const result = await pollJob(launched.jobId, {
         signal: controller.signal,
         totalTimeoutMs,
@@ -209,7 +206,8 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
     const likec4Btn = mkButton(TARGET_LABELS.likec4, "action");
     const superpowersBtn = mkButton(TARGET_LABELS.superpowers, "action");
     const allBtn = mkButton("すべて生成", "action");
-    convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn);
+    const draftBtn = mkButton("定義書作成", "action");
+    convertRow.append(alliumBtn, likec4Btn, superpowersBtn, allBtn, draftBtn);
 
     const prLabel = document.createElement("div");
     prLabel.className = "section-label";
@@ -241,7 +239,16 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       status,
       log,
     );
-    allButtons.push(scaffoldBtn, alliumBtn, likec4Btn, superpowersBtn, allBtn, prBtn, conflictBtn);
+    allButtons.push(
+      scaffoldBtn,
+      alliumBtn,
+      likec4Btn,
+      superpowersBtn,
+      allBtn,
+      draftBtn,
+      prBtn,
+      conflictBtn,
+    );
 
     scaffoldBtn.addEventListener("click", () => {
       void (async () => {
@@ -279,6 +286,9 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
         postConvert({ ...issue, targets: ["allium", "likec4", "superpowers"] }),
       );
     });
+    draftBtn.addEventListener("click", () => {
+      void withJob("定義書作成", () => postDraft(issue));
+    });
 
     prBtn.addEventListener("click", () => {
       const ok = window.confirm(
@@ -295,12 +305,35 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       if (!ok) return;
       void withJob("コンフリクト解決", () => postResolveConflicts(issue));
     });
+  } else if (kind === "bug") {
+    // bug 種別: type:bug ラベルの付いた issue に対する原因調査を実行する。
+    const investigateRow = document.createElement("div");
+    investigateRow.className = "row";
+    const investigateBtn = mkButton("調査を実行", "action");
+    investigateRow.append(investigateBtn);
+
+    body.append(investigateRow, status, log);
+    allButtons.push(investigateBtn);
+
+    investigateBtn.addEventListener("click", () => {
+      void withJob("調査", () => investigate(issue));
+    });
   } else {
-    // bug / feature 種別: 対応する機能 (#3 / #4) 実装までのプレースホルダー表示。
-    const placeholderLabel = document.createElement("div");
-    placeholderLabel.className = "section-label";
-    placeholderLabel.textContent = PLACEHOLDER_TEXT[kind];
-    body.append(placeholderLabel, status, log);
+    // feature 種別: 機能要望issueへの質問生成・再判定ループ。
+    const clarifyLabel = document.createElement("div");
+    clarifyLabel.className = "section-label";
+    clarifyLabel.textContent = "質問";
+    const clarifyRow = document.createElement("div");
+    clarifyRow.className = "row";
+    const clarifyBtn = mkButton("質問を実行", "action");
+    clarifyRow.append(clarifyBtn);
+
+    body.append(clarifyLabel, clarifyRow, status, log);
+    allButtons.push(clarifyBtn);
+
+    clarifyBtn.addEventListener("click", () => {
+      void withJob("質問", () => postClarify(issue));
+    });
   }
 
   panel.append(header, body);

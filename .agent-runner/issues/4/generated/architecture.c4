@@ -1,0 +1,96 @@
+specification {
+  element actor
+  element system
+  element component
+}
+
+model {
+  user = actor 'ユーザー' {
+    description '機能要望issueにコメントで回答し、質問実行ボタンを操作する'
+  }
+
+  webhook = system 'webhook' {
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /clarify エンドポイント。IssueRefSchemaを検証し jobLocks.acquire(ref, job.id, false) でissue単位のロックを取得してジョブを起動する'
+    }
+
+    clarifyJob = component 'jobs/clarify.ts' {
+      description 'runClarifyJob(job, client, ref): issue本文取得→前回の質問コメント取得→Claude CLIで質問リスト/解消判定を生成→コメントupsert。コードのcloneは行わない'
+    }
+
+    clarifyPrompt = component 'prompts/clarify.ts' {
+      description 'buildClarifyPrompt(issueBody, previousQa): issue本文と前回の質問コメント本文 (人間の回答を含む) から質問リストと解消状況を構造化出力させるprompt/JSON Schemaを組み立てる'
+    }
+
+    apiTypes = component 'types/api.ts' {
+      description 'JobKindに"clarify"を追加、ClarifyRequest = IssueRefを追加'
+    }
+
+    markers = component 'markers.ts' {
+      description 'GENERATED_KINDSに"clarify"を追加。agent-runner:generated:clarify:1/1マーカーでupsertGeneratedComments/collectGeneratedArtifactの対象に載せる。clarifyはコードフェンスを使わないためextractFencedCodeは非マッチとなりraw全体を返す既存挙動を利用する'
+    }
+
+    jobsRoute -> clarifyJob 'ジョブを実行'
+    clarifyJob -> apiTypes 'ClarifyRequest/JobKindを参照'
+    clarifyJob -> clarifyPrompt 'buildClarifyPromptでprompt/JSON Schemaを取得'
+    clarifyJob -> markers 'collectGeneratedArtifact(client, comments, "clarify")で前回の質問コメント本文を取得、upsertGeneratedComments(client, ref, "clarify", body, existing)でコメントに反映'
+  }
+
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。tools: [] (コードは読まないためRead系ツールも不要)。質問リストとallResolvedを構造化出力させる'
+  }
+
+  github = system 'GitHub' {
+    description 'Issue本文・コメントの取得元。clarifyJobからgetIssue()/listIssueComments()/upsertGeneratedCommentsで参照・更新される'
+  }
+
+  userscript = system 'userscript' {
+    description 'ブラウザ上でGitHub Issue画面に質問実行UIを追加するuserscript'
+
+    gmClient = component 'gm-client.ts' {
+      description 'clarify(ref)でPOST /clarifyを呼ぶ'
+    }
+
+    panel = component 'ui/panel.ts' {
+      description 'issueKind (#2で追加) が"feature"のときのみ「質問を実行」ボタンを表示し、clarify()を呼ぶ'
+    }
+
+    panel -> gmClient 'clarify(ref)を呼ぶ'
+  }
+
+  user -> panel '「質問を実行」ボタンを押す、または質問コメントを直接編集して回答する'
+  gmClient -> jobsRoute 'POST /clarify'
+  clarifyJob -> github 'getIssue()/listIssueComments()でissue本文・前回の質問コメントを取得、結果をコメントとしてupsert'
+  clarifyJob -> claudeCli 'tools: []で質問リストとallResolvedの構造化出力を依頼'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of webhook {
+    title 'webhook内部構成'
+    include *
+  }
+
+  view of userscript {
+    title 'userscript内部構成'
+    include *
+  }
+
+  dynamic view clarifyFlow {
+    title '質問回答ループの実行フロー'
+    user -> panel 'issueKindがfeatureの場合「質問を実行」ボタンをクリック (または既存の質問コメントを編集して回答)'
+    panel -> gmClient 'clarify(ref)を呼ぶ'
+    gmClient -> jobsRoute 'POST /clarify'
+    jobsRoute -> clarifyJob 'jobLocks.acquire(ref, job.id, false)でロックを取得しジョブを実行'
+    clarifyJob -> github 'getIssue()でissue本文、listIssueComments()で前回の質問コメント (人間の回答を含む) を取得'
+    clarifyJob -> clarifyPrompt 'buildClarifyPromptでprompt/JSON Schemaを構築'
+    clarifyJob -> claudeCli 'tools: []で質問リスト/allResolvedの生成を依頼'
+    clarifyJob -> github 'upsertGeneratedComments(client, ref, "clarify", body, existing)でコメントに反映 (新規コメントは増やさない)'
+  }
+}
