@@ -1,0 +1,103 @@
+-- allium: 3
+
+-- #2 で type:feature ラベル判定が可能になっている前提のもと、
+-- 機能要望issueに対する質問生成・再判定ループ (人間がコメントを直接編集して回答する運用) を定義する。
+
+external entity Issue {
+    number: Integer
+    body: String                              -- issue本文 (質問生成の入力)
+    has_feature_label: Boolean                 -- type:feature ラベルの有無 (#2 で提供される前提)
+    jobs: Job with issue = this
+    is_locked: jobs.any(j => j.status = running)   -- issue単位ロック (既存のconvertジョブと同水準)
+    clarify_comments: ClarifyComment with issue = this
+    has_clarify_comment: clarify_comments.any()     -- 既存の質問コメントの有無 (upsert判定に使う)
+}
+
+entity Job {
+    issue: Issue
+    status: running | succeeded | failed
+
+    transitions status {
+        running -> succeeded
+        running -> failed
+        terminal: succeeded
+        terminal: failed
+    }
+}
+
+entity ClarifyComment {
+    issue: Issue                     -- issueごとに高々1件 (再実行しても増殖しない)
+    question_count: Integer          -- 直近の実行で提示された質問の総数
+    unresolved_count: Integer        -- うち未解決の質問数
+    all_resolved: Boolean            -- 未解決が0件かどうか (人間が一目で判断できる表示に使う)
+}
+
+rule StartClarify {
+    when: RunClarify(issue)
+    requires:
+        issue.has_feature_label = true
+        not issue.is_locked
+    ensures:
+        Job.created(issue: issue, status: running)  -- pending状態を経ずに即running開始 (キューイングは既存のjobLocksが担う)
+}
+
+rule PublishFirstClarifyComment {
+    when: ClarifySucceeded(job, result)
+    requires:
+        job.status = running
+        not job.issue.has_clarify_comment
+    ensures:
+        job.status = succeeded
+        ClarifyComment.created(
+            issue: job.issue
+            question_count: result.question_count
+            unresolved_count: result.unresolved_count
+            all_resolved: result.all_resolved
+        )
+}
+
+rule UpdateClarifyComment {
+    when: ClarifySucceeded(job, result)
+    requires:
+        job.status = running
+        job.issue.has_clarify_comment
+    ensures:
+        job.status = succeeded
+        job.issue.clarify_comments.first.question_count = result.question_count
+        job.issue.clarify_comments.first.unresolved_count = result.unresolved_count
+        job.issue.clarify_comments.first.all_resolved = result.all_resolved
+}
+
+rule FailClarify {
+    when: ClarifyFailed(job)
+    requires: job.status = running
+    ensures: job.status = failed
+}
+
+invariant SingleClarifyCommentPerIssue {
+    for issue in Issues:
+        issue.clarify_comments.count <= 1
+}
+
+invariant AllResolvedMeansNoUnresolvedQuestions {
+    for comment in ClarifyComments where all_resolved = true:
+        comment.unresolved_count = 0
+}
+
+invariant UnresolvedCountWithinTotal {
+    for comment in ClarifyComments:
+        comment.unresolved_count <= comment.question_count
+}
+
+invariant NonNegativeQuestionCount {
+    for comment in ClarifyComments:
+        comment.question_count >= 0
+}
+
+actor Maintainer {}
+
+surface ClarifyButton {
+    actor: Maintainer
+    visible_when: issue.has_feature_label = true
+    triggers: RunClarify(issue)
+}

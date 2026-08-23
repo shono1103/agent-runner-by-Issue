@@ -2,8 +2,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { config } from "../config.ts";
 import { createGithubClient } from "../github.ts";
+import { runClarifyJob } from "../jobs/clarify.ts";
 import { runConvertJob } from "../jobs/convert.ts";
 import { runCreatePrJob } from "../jobs/createPr.ts";
+import { runInvestigateJob } from "../jobs/investigate.ts";
+import { runResolveConflictsJob } from "../jobs/resolveConflicts.ts";
 import { jobStore } from "../jobs/store.ts";
 import { jobLocks } from "../locks.ts";
 import type {
@@ -86,6 +89,101 @@ jobsRoute.post("/create-pr", async (c) => {
 
   const client = await createGithubClient(config.githubToken);
   runCreatePrJob(job, client, ref).finally(() => jobLocks.release(ref, true));
+
+  return c.json<JobStartResponse>({ jobId: job.id }, 202);
+});
+
+jobsRoute.post("/resolve-conflicts", async (c) => {
+  const json = await c.req.json().catch(() => null);
+  const parsed = IssueRefSchema.safeParse(json);
+  if (!parsed.success) {
+    return c.json<ApiErrorResponse>(
+      { error: "invalid_request", message: parsed.error.message },
+      400,
+    );
+  }
+  const ref: IssueRef = parsed.data;
+
+  const job = jobStore.create("resolve-conflicts");
+  // create-pr と同じくリポジトリ単位でもロックする (git push が競合するため)。
+  const acquired = jobLocks.acquire(ref, job.id, true);
+  if (!acquired) {
+    const holder = jobLocks.holderOf(ref, true);
+    return c.json<JobConflictResponse>(
+      {
+        error: "locked",
+        jobId: holder ?? job.id,
+        message: "この Issue またはリポジトリに対するジョブが既に実行中です",
+      },
+      409,
+    );
+  }
+
+  const client = await createGithubClient(config.githubToken);
+  runResolveConflictsJob(job, client, ref).finally(() => jobLocks.release(ref, true));
+
+  return c.json<JobStartResponse>({ jobId: job.id }, 202);
+});
+
+jobsRoute.post("/investigate", async (c) => {
+  const json = await c.req.json().catch(() => null);
+  const parsed = IssueRefSchema.safeParse(json);
+  if (!parsed.success) {
+    return c.json<ApiErrorResponse>(
+      { error: "invalid_request", message: parsed.error.message },
+      400,
+    );
+  }
+  const ref: IssueRef = parsed.data;
+
+  // 調査は push を伴わないため、リポジトリ単位ではなく Issue 単位のロックで足りる。
+  const job = jobStore.create("investigate");
+  const acquired = jobLocks.acquire(ref, job.id, false);
+  if (!acquired) {
+    const holder = jobLocks.holderOf(ref, false);
+    return c.json<JobConflictResponse>(
+      {
+        error: "locked",
+        jobId: holder ?? job.id,
+        message: "この Issue に対するジョブが既に実行中です",
+      },
+      409,
+    );
+  }
+
+  const client = await createGithubClient(config.githubToken);
+  runInvestigateJob(job, client, ref).finally(() => jobLocks.release(ref, false));
+
+  return c.json<JobStartResponse>({ jobId: job.id }, 202);
+});
+
+jobsRoute.post("/clarify", async (c) => {
+  const json = await c.req.json().catch(() => null);
+  const parsed = IssueRefSchema.safeParse(json);
+  if (!parsed.success) {
+    return c.json<ApiErrorResponse>(
+      { error: "invalid_request", message: parsed.error.message },
+      400,
+    );
+  }
+  const ref: IssueRef = parsed.data;
+
+  const job = jobStore.create("clarify");
+  const acquired = jobLocks.acquire(ref, job.id, false);
+  if (!acquired) {
+    const holder = jobLocks.holderOf(ref, false);
+    return c.json<JobConflictResponse>(
+      {
+        error: "locked",
+        jobId: holder ?? job.id,
+        message: "この Issue に対するジョブが既に実行中です",
+      },
+      409,
+    );
+  }
+
+  const client = await createGithubClient(config.githubToken);
+  runClarifyJob(job, client, ref).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
 });
