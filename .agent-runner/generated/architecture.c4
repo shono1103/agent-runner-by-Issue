@@ -1,67 +1,69 @@
 specification {
+  element actor
   element system
-  element container
   element component
 }
 
 model {
-  github = system 'GitHub' {
-    description 'Issue Forms とIssueページ (ラベル表示含む) を提供するプラットフォーム'
-
-    issueTemplates = container 'Issue Templates' {
-      description '.github/ISSUE_TEMPLATE 配下のIssue Forms定義。labels: フィールドで固定ラベルを自動付与する'
-
-      bugReportTemplate = component 'bug_report.yml' {
-        description 'バグ報告用テンプレート。作成時にラベル type:bug を自動付与'
-      }
-      featureRequestTemplate = component 'feature_request.yml' {
-        description '機能要望用テンプレート。作成時にラベル type:feature を自動付与'
-      }
-      taskTemplate = component 'task.yml' {
-        description 'タスク用テンプレート。作成時にラベル type:task を自動付与'
-      }
-      config = component 'config.yml' {
-        description 'blank_issues_enabled: false を設定し、テンプレート経由の作成を必須にする'
-      }
-    }
-
-    issuePage = container 'Issue ページ' {
-      description 'サイドバーのLabelsセクションに type:bug / type:feature / type:task が表示される'
-    }
-  }
-
-  githubApi = system 'GitHub API' {
-    description 'issueのlabelsフィールドをAPI経由でも提供する'
-  }
-
-  userscript = system 'userscript' {
-    description 'issueページ上でパネルを表示し、種類に応じたボタンを出し分ける拡張スクリプト'
-
-    main = component 'main.ts' {
-      description 'mount() 内でissueページDOMからlabelsを1度だけ読み取る'
-    }
-    issueKind = component 'issue-kind.ts' {
-      description 'issueKind(labels: string[]): "bug"|"feature"|"task" を判定。type:bug/type:feature双方あればtype:bug優先、どちらも無ければtask (後方互換デフォルト)'
-    }
-    panel = component 'ui/panel.ts' {
-      description 'buildPanel() が種類に応じて表示ボタンを切り替える。task→フォーマット作成/Allium生成/LikeC4生成/Superpowers生成/すべて生成/PRを作成。bug→調査ボタン(プレースホルダー、#3で実装)。feature→質問ボタン(プレースホルダー、#4で実装)'
-    }
-
-    main -> issueKind 'labels配列を渡して種類判定'
-    main -> panel 'issueKindの結果 (bug/feature/task) を渡す'
+  user = actor 'ユーザー' {
+    description '機能要望issueにコメントで回答し、質問実行ボタンを操作する'
   }
 
   webhook = system 'webhook' {
-    description '本issueのスコープでは変更なし。#3・#4実装時にGitHub APIからlabelsを読み取り種類分岐する際、同じラベル名を参照する前提'
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /clarify エンドポイント。IssueRefSchemaを検証し jobLocks.acquire(ref, job.id, false) でissue単位のロックを取得してジョブを起動する'
+    }
+
+    clarifyJob = component 'jobs/clarify.ts' {
+      description 'runClarifyJob(job, client, ref): issue本文取得→前回の質問コメント取得→Claude CLIで質問リスト/解消判定を生成→コメントupsert。コードのcloneは行わない'
+    }
+
+    clarifyPrompt = component 'prompts/clarify.ts' {
+      description 'buildClarifyPrompt(issueBody, previousQa): issue本文と前回の質問コメント本文 (人間の回答を含む) から質問リストと解消状況を構造化出力させるprompt/JSON Schemaを組み立てる'
+    }
+
+    apiTypes = component 'types/api.ts' {
+      description 'JobKindに"clarify"を追加、ClarifyRequest = IssueRefを追加'
+    }
 
     markers = component 'markers.ts' {
-      description '既存のコメント種別マーカー機能。ラベルによる種類判別とは別レイヤーの関心事'
+      description 'GENERATED_KINDSに"clarify"を追加。agent-runner:generated:clarify:1/1マーカーでupsertGeneratedComments/collectGeneratedArtifactの対象に載せる。clarifyはコードフェンスを使わないためextractFencedCodeは非マッチとなりraw全体を返す既存挙動を利用する'
     }
+
+    jobsRoute -> clarifyJob 'ジョブを実行'
+    clarifyJob -> apiTypes 'ClarifyRequest/JobKindを参照'
+    clarifyJob -> clarifyPrompt 'buildClarifyPromptでprompt/JSON Schemaを取得'
+    clarifyJob -> markers 'collectGeneratedArtifact(client, comments, "clarify")で前回の質問コメント本文を取得、upsertGeneratedComments(client, ref, "clarify", body, existing)でコメントに反映'
   }
 
-  userscript.main -> github.issuePage 'issueページDOMのLabelsセクションを読み取る'
-  github.issueTemplates -> githubApi 'テンプレート経由のissue作成時にlabels:フィールドでラベルを自動付与'
-  webhook.markers -> githubApi 'labelsフィールドを読み取り種類に応じた処理を分岐 (#3・#4で実装予定)'
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。tools: [] (コードは読まないためRead系ツールも不要)。質問リストとallResolvedを構造化出力させる'
+  }
+
+  github = system 'GitHub' {
+    description 'Issue本文・コメントの取得元。clarifyJobからgetIssue()/listIssueComments()/upsertGeneratedCommentsで参照・更新される'
+  }
+
+  userscript = system 'userscript' {
+    description 'ブラウザ上でGitHub Issue画面に質問実行UIを追加するuserscript'
+
+    gmClient = component 'gm-client.ts' {
+      description 'clarify(ref)でPOST /clarifyを呼ぶ'
+    }
+
+    panel = component 'ui/panel.ts' {
+      description 'issueKind (#2で追加) が"feature"のときのみ「質問を実行」ボタンを表示し、clarify()を呼ぶ'
+    }
+
+    panel -> gmClient 'clarify(ref)を呼ぶ'
+  }
+
+  user -> panel '「質問を実行」ボタンを押す、または質問コメントを直接編集して回答する'
+  gmClient -> jobsRoute 'POST /clarify'
+  clarifyJob -> github 'getIssue()/listIssueComments()でissue本文・前回の質問コメントを取得、結果をコメントとしてupsert'
+  clarifyJob -> claudeCli 'tools: []で質問リストとallResolvedの構造化出力を依頼'
 }
 
 views {
@@ -70,21 +72,25 @@ views {
     include *
   }
 
-  view of github {
-    title 'GitHub側: Issue Formsとラベル付与'
+  view of webhook {
+    title 'webhook内部構成'
     include *
   }
 
   view of userscript {
-    title 'userscript内部: 種類判定とパネル切り替え'
+    title 'userscript内部構成'
     include *
   }
 
-  dynamic view issueKindFlow {
-    title '種類判定からパネル表示までの流れ'
-    userscript.main -> github.issuePage 'issueページDOMからlabelsを取得'
-    userscript.main -> userscript.issueKind 'labels配列を渡す'
-    userscript.issueKind -> userscript.main '"bug" | "feature" | "task" を返す (両方あればbug優先、無指定はtask)'
-    userscript.main -> userscript.panel '判定結果を渡し、種類に応じたボタンを表示させる'
+  dynamic view clarifyFlow {
+    title '質問回答ループの実行フロー'
+    user -> panel 'issueKindがfeatureの場合「質問を実行」ボタンをクリック (または既存の質問コメントを編集して回答)'
+    panel -> gmClient 'clarify(ref)を呼ぶ'
+    gmClient -> jobsRoute 'POST /clarify'
+    jobsRoute -> clarifyJob 'jobLocks.acquire(ref, job.id, false)でロックを取得しジョブを実行'
+    clarifyJob -> github 'getIssue()でissue本文、listIssueComments()で前回の質問コメント (人間の回答を含む) を取得'
+    clarifyJob -> clarifyPrompt 'buildClarifyPromptでprompt/JSON Schemaを構築'
+    clarifyJob -> claudeCli 'tools: []で質問リスト/allResolvedの生成を依頼'
+    clarifyJob -> github 'upsertGeneratedComments(client, ref, "clarify", body, existing)でコメントに反映 (新規コメントは増やさない)'
   }
 }

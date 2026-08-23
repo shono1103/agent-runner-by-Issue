@@ -30,8 +30,10 @@ const EnvSchema = z.object({
   CLAUDE_MODEL: z.string().default("sonnet"),
   CONVERT_MAX_BUDGET_USD: z.coerce.number().positive().default(0.5),
   PR_MAX_BUDGET_USD: z.coerce.number().positive().default(5),
+  CLARIFY_MAX_BUDGET_USD: z.coerce.number().positive().default(0.3),
   CONVERT_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   PR_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
+  CLARIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export type Config = {
@@ -46,8 +48,10 @@ export type Config = {
   claudeModel: string;
   convertMaxBudgetUsd: number;
   prMaxBudgetUsd: number;
+  clarifyMaxBudgetUsd: number;
   convertTimeoutMs: number;
   prTimeoutMs: number;
+  clarifyTimeoutMs: number;
 };
 
 function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -77,8 +81,10 @@ function loadConfig(env: NodeJS.ProcessEnv): Config {
     claudeModel: e.CLAUDE_MODEL,
     convertMaxBudgetUsd: e.CONVERT_MAX_BUDGET_USD,
     prMaxBudgetUsd: e.PR_MAX_BUDGET_USD,
+    clarifyMaxBudgetUsd: e.CLARIFY_MAX_BUDGET_USD,
     convertTimeoutMs: e.CONVERT_TIMEOUT_MS,
     prTimeoutMs: e.PR_TIMEOUT_MS,
+    clarifyTimeoutMs: e.CLARIFY_TIMEOUT_MS,
   };
 }
 

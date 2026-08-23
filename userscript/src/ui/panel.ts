@@ -3,6 +3,7 @@ import {
   HttpError,
   getHealth,
   pollJob,
+  postClarify,
   postConvert,
   postCreatePr,
   postScaffold,
@@ -25,11 +26,9 @@ const TARGET_LABELS: Record<ConvertTarget, string> = {
   superpowers: "Superpowers 生成",
 };
 
-// bug / feature 用のボタンはそれぞれ #3 / #4 のスコープで実装する。
-// 本issue (#2) の時点ではプレースホルダーの説明文のみを表示する。
-const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task">, string> = {
+// bug 用のボタンは #3 のスコープで実装する。それまではプレースホルダーの説明文のみを表示する。
+const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task" | "feature">, string> = {
   bug: "調査 (準備中: #3 で実装予定)",
-  feature: "質問 (準備中: #4 で実装予定)",
 };
 
 function mkButton(label: string, className: string): HTMLButtonElement {
@@ -250,8 +249,24 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       if (!ok) return;
       void withJob("PR 作成", () => postCreatePr(issue));
     });
+  } else if (kind === "feature") {
+    // feature 種別: 機能要望issueへの質問生成・再判定ループ。
+    const clarifyLabel = document.createElement("div");
+    clarifyLabel.className = "section-label";
+    clarifyLabel.textContent = "質問";
+    const clarifyRow = document.createElement("div");
+    clarifyRow.className = "row";
+    const clarifyBtn = mkButton("質問を実行", "action");
+    clarifyRow.append(clarifyBtn);
+
+    body.append(clarifyLabel, clarifyRow, status, log);
+    allButtons.push(clarifyBtn);
+
+    clarifyBtn.addEventListener("click", () => {
+      void withJob("質問", () => postClarify(issue));
+    });
   } else {
-    // bug / feature 種別: 対応する機能 (#3 / #4) 実装までのプレースホルダー表示。
+    // bug 種別: 対応する機能 (#3) 実装までのプレースホルダー表示。
     const placeholderLabel = document.createElement("div");
     placeholderLabel.className = "section-label";
     placeholderLabel.textContent = PLACEHOLDER_TEXT[kind];

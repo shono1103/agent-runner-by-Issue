@@ -1,6 +1,7 @@
 import { GM_xmlhttpRequest } from "$";
 import type {
   ApiErrorResponse,
+  ClarifyRequest,
   ConvertRequest,
   CreatePrRequest,
   HealthResponse,
@@ -128,6 +129,10 @@ export async function postConvert(req: ConvertRequest): Promise<JobLaunchResult>
 
 export async function postCreatePr(req: CreatePrRequest): Promise<JobLaunchResult> {
   return postJobStart("/api/jobs/create-pr", req);
+}
+
+export async function postClarify(req: ClarifyRequest): Promise<JobLaunchResult> {
+  return postJobStart("/api/jobs/clarify", req);
 }
 
 async function postJobStart(path: string, body: unknown): Promise<JobLaunchResult> {
