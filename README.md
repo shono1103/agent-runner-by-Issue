@@ -154,7 +154,7 @@ pnpm --filter userscript dev   # dist/agent-runner.user.js を watch ビルド�
    ```js
    // ==UserScript==
    // @name         agent-runner (dev loader)
-   // @match        https://github.com/*/*/issues/*
+   // @match        https://github.com/*
    // @grant        GM_xmlhttpRequest
    // @grant        GM_getValue
    // @grant        GM_setValue
