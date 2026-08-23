@@ -69,9 +69,11 @@ const EnvSchema = z.object({
   CONVERT_MAX_BUDGET_USD: z.coerce.number().positive().default(0.5),
   PR_MAX_BUDGET_USD: z.coerce.number().positive().default(5),
   INVESTIGATE_MAX_BUDGET_USD: z.coerce.number().positive().default(1),
+  CLARIFY_MAX_BUDGET_USD: z.coerce.number().positive().default(0.3),
   CONVERT_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   PR_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
   INVESTIGATE_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+  CLARIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 });
 
 export type Config = {
@@ -87,9 +89,11 @@ export type Config = {
   convertMaxBudgetUsd: number;
   prMaxBudgetUsd: number;
   investigateMaxBudgetUsd: number;
+  clarifyMaxBudgetUsd: number;
   convertTimeoutMs: number;
   prTimeoutMs: number;
   investigateTimeoutMs: number;
+  clarifyTimeoutMs: number;
 };
 
 /**
@@ -154,9 +158,11 @@ function loadConfig(env: NodeJS.ProcessEnv): Config {
     convertMaxBudgetUsd: e.CONVERT_MAX_BUDGET_USD,
     prMaxBudgetUsd: e.PR_MAX_BUDGET_USD,
     investigateMaxBudgetUsd: e.INVESTIGATE_MAX_BUDGET_USD,
+    clarifyMaxBudgetUsd: e.CLARIFY_MAX_BUDGET_USD,
     convertTimeoutMs: e.CONVERT_TIMEOUT_MS,
     prTimeoutMs: e.PR_TIMEOUT_MS,
     investigateTimeoutMs: e.INVESTIGATE_TIMEOUT_MS,
+    clarifyTimeoutMs: e.CLARIFY_TIMEOUT_MS,
   };
 }
 

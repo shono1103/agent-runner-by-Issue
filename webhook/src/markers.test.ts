@@ -12,3 +12,14 @@ test("parseMarker: investigation マーカーを generated/investigation/1/1 と
   const parsed = parseMarker(`${marker}\n\n本文`);
   assert.deepEqual(parsed, { type: "generated", kind: "investigation", part: 1, total: 1 });
 });
+
+test("buildGeneratedMarker: clarify kind のマーカー文字列を生成できる", () => {
+  const marker = buildGeneratedMarker("clarify", 1, 1);
+  assert.equal(marker, "<!-- agent-runner:generated:clarify:1/1 この行は消さないでください -->");
+});
+
+test("parseMarker: clarify kind のマーカー文字列を正しくパースできる", () => {
+  const marker = buildGeneratedMarker("clarify", 1, 1);
+  const parsed = parseMarker(marker);
+  assert.deepEqual(parsed, { type: "generated", kind: "clarify", part: 1, total: 1 });
+});

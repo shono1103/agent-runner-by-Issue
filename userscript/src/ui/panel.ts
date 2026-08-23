@@ -5,6 +5,7 @@ import {
   getPrStatus,
   investigate,
   pollJob,
+  postClarify,
   postConvert,
   postCreatePr,
   postResolveConflicts,
@@ -26,12 +27,6 @@ const TARGET_LABELS: Record<ConvertTarget, string> = {
   allium: "Allium 生成",
   likec4: "LikeC4 生成",
   superpowers: "Superpowers 生成",
-};
-
-// feature 用のボタンは #4 のスコープで実装する。
-// 本issue (#3) の時点では bug のみ実装し、feature はプレースホルダーの説明文のみを表示する。
-const PLACEHOLDER_TEXT: Record<Exclude<IssueKind, "task" | "bug">, string> = {
-  feature: "質問 (準備中: #4 で実装予定)",
 };
 
 function mkButton(label: string, className: string): HTMLButtonElement {
@@ -310,11 +305,21 @@ export function buildPanel(issue: IssueLocation, kind: IssueKind): PanelHandle {
       void withJob("調査", () => investigate(issue));
     });
   } else {
-    // feature 種別: 対応する機能 (#4) 実装までのプレースホルダー表示。
-    const placeholderLabel = document.createElement("div");
-    placeholderLabel.className = "section-label";
-    placeholderLabel.textContent = PLACEHOLDER_TEXT[kind];
-    body.append(placeholderLabel, status, log);
+    // feature 種別: 機能要望issueへの質問生成・再判定ループ。
+    const clarifyLabel = document.createElement("div");
+    clarifyLabel.className = "section-label";
+    clarifyLabel.textContent = "質問";
+    const clarifyRow = document.createElement("div");
+    clarifyRow.className = "row";
+    const clarifyBtn = mkButton("質問を実行", "action");
+    clarifyRow.append(clarifyBtn);
+
+    body.append(clarifyLabel, clarifyRow, status, log);
+    allButtons.push(clarifyBtn);
+
+    clarifyBtn.addEventListener("click", () => {
+      void withJob("質問", () => postClarify(issue));
+    });
   }
 
   panel.append(header, body);

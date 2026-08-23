@@ -20,7 +20,7 @@ function makeWorkspace(): GitWorkspace {
 
 function makeDeps(overrides: Partial<InvestigateDeps>): InvestigateDeps {
   const base: InvestigateDeps = {
-    getIssue: async () => ({ title: "t", body: "## 再現手順\nxxx" }),
+    getIssue: async () => ({ title: "t", body: "## 再現手順\nxxx", labels: [] }),
     listIssueComments: async () => [],
     upsertGeneratedComments: async () => {},
     prepareGitWorkspace: async () => makeWorkspace(),

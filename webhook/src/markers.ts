@@ -11,7 +11,13 @@
 export const SOURCE_KINDS = ["requirements", "architecture", "tests"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
-export const GENERATED_KINDS = ["allium", "likec4", "superpowers", "investigation"] as const;
+export const GENERATED_KINDS = [
+  "allium",
+  "likec4",
+  "superpowers",
+  "investigation",
+  "clarify",
+] as const;
 export type GeneratedKind = (typeof GENERATED_KINDS)[number];
 
 const PREFIX = "agent-runner";
