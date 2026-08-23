@@ -2,40 +2,31 @@
 
 ### 背景
 
-`create-pr` ジョブは issue ごとに独立した clone・ブランチ (`agent-runner/issue-<N>-<hash>`) で
-実装を行うが、複数の issue の実装が同じ共有ファイル (例: `userscript/src/main.ts`,
-`userscript/src/ui/panel.ts`, `webhook/src/types/api.ts`, `webhook/src/markers.ts`,
-`webhook/src/routes/jobs.ts`, `userscript/src/gm-client.ts`) を編集することが多い。
-そのため、あるPRが先に main にマージされると、まだマージされていない他のPRは
-`mergeable: false` (dirty) の状態になる。実例: issue #5 のPR (#18) が main にマージされた
-直後、issue #3/#4/#9/#23 のPR (#20/#25/#26/#27) がすべて dirty 化した。
+#28 で実装した「コンフリクト解決」ボタンは issue 詳細ページの userscript パネルにのみ
+表示される (`@match: ["https://github.com/*/*/issues/*"]` のため、PR ページでは
+userscript 自体が注入されない)。しかし実際にコンフリクトへ気づくのは、GitHub が
+ネイティブに「This branch has conflicts that must be resolved」と表示する **PR ページ**
+であることがほとんどで、そこにAIによる解決手段への導線が無いと機能の存在に気づけない/
+使いにくい。
 
 ### 要件
 
-1. 対象の issue (またはPR) を指定して、そのPRブランチと現在の main とのコンフリクトを
-   解消する新しいジョブ (`resolve-conflicts`) を追加すること
-2. コンフリクト解消方針は「取り込みマージ」とする: PRブランチに main を **merge** する
-   (rebase ではない)。コンフリクトが発生した箇所は、claude cli に
-   「mainの変更意図」と「PRブランチの変更意図」の両方を汲み取らせ、両方が活きる形で
-   統合的に解決させる (単純な `--ours`/`--theirs` によるどちらか一方の切り捨てはしない)
-3. 解消後、対象PRが GitHub 上で `mergeable: true` になる状態までブランチを更新し、push すること
-4. userscript 側に、対象issueに紐づくPRが `mergeable: false` (コンフリクト中) のときにのみ
-   表示される「コンフリクト解決」ボタンを追加すること
-5. 意味的に両立不可能で自動解決できないコンフリクトがあった場合は、無理に確定させず、
-   ジョブを失敗として終了し、どのファイル・箇所を解決できなかったかを結果に含めること
-6. 既存の `create-pr` ジョブ (実装・commit・push) の安全設計 (`assertSafeDiff` による
-   `.github/workflows/` 等の変更拒否、`permissionMode: acceptEdits` 固定) をこのジョブにも
-   同水準で適用すること
+1. userscript の `@match` に `https://github.com/*/*/pull/*` を追加し、PR ページでも
+   userscript が起動するようにすること (既存の issue ページでの動作は維持すること)
+2. PR ページを開いたとき、そのPRに対応する issue 番号 (PR本文の `Closes #<N>` または
+   ブランチ名 `agent-runner/issue-<N>-*` から判定) を webhook 経由で特定できること
+3. 対応する issue が見つかり、かつそのPRが `mergeable: false` (コンフリクト中) の場合のみ、
+   PRページに「コンフリクト解決」ボタンを表示すること
+4. PRページに表示するのは「コンフリクト解決」ボタンのみとし、フォーマット作成・変換・
+   PR作成など issue ページ用の他のボタン一式は表示しないこと (PRページでissueに対する
+   他の操作をするのは文脈的に不自然なため)
+5. 対応する issue が特定できない (agent-runner 由来のPRではない、または既にmergeable な)
+   場合は、パネル自体を表示しないこと
+6. 既存の issue ページでの動作 (#9 で対応した soft-navigation 含む) を壊さないこと
 
 ### 非機能要件
 
-- 本ジョブはリポジトリへの push を伴うため、既存の `create-pr` と同じくリポジトリ単位の
-  排他ロックを取得すること (同時に他の `create-pr`/`resolve-conflicts` ジョブと競合させない)
-- 解決前後の差分を人間が確認できるよう、解決結果はPRへのpushという形で残し、
-  ジョブ自体が直接 GitHub 上でPRをマージすることはしない (マージ判断は人間に残す)
-
-### open question
-
-「取り込みマージ」の厳密な定義 (単純な `git merge main` 実行後、コンフリクトマーカーを
-claude cliに解決させるという解釈で進めるが、それ以上に高度な意味的統合まで求めているかは
-issue本文からは断定できない) は未確定として残す。
+- `@match` を広げることで PR ページでも常時 userscript が起動するようになるが、
+  既存の 300ms ポーリング・`MutationObserver` のコスト範囲内であること (#9 の判断を踏襲)
+- webhook 側の既存API・ジョブロジック (`resolve-conflicts` 含む) には変更を加えず、
+  PR番号→issue番号の逆引き用エンドポイントを追加するのみとすること

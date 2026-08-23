@@ -9,37 +9,32 @@ model {
     description 'agent-runner-by-Issue の運用者'
   }
 
-  webhook = system 'webhook' {
-    routes = component 'jobs route (POST /resolve-conflicts)'
-    job = component 'resolveConflicts.ts'
-    prompt = component 'prompts/resolveConflicts.ts'
-    gitLib = component 'git.ts (mergeMain, prepareGitWorkspaceFromBranch)'
-    githubLib = component 'github.ts (findOpenPrForIssue)'
-    claudeCli = component 'runClaude()'
+  userscript = system 'userscript' {
+    location = component 'location.ts (currentPr)'
+    mainTs = component 'main.ts (sync)'
+    panel = component 'ui/panel.ts (mountPrPanel)'
+    gmClient = component 'gm-client.ts (getIssueForPr)'
 
-    routes -> job 'ジョブを起動'
-    job -> githubLib '対象issueのPRを検索'
-    job -> gitLib 'ブランチをclone・mainをmerge'
-    job -> prompt 'コンフリクトファイルごとにプロンプト構築'
-    prompt -> claudeCli 'コンフリクト解決を依頼'
+    mainTs -> location 'PRページか判定'
+    mainTs -> panel 'PR用パネルをマウント'
+    panel -> gmClient 'issue番号・mergeable状態を取得'
   }
 
-  userscript = system 'userscript' {
-    panel = component 'ui/panel.ts (コンフリクト解決ボタン)'
-    gmClient = component 'gm-client.ts (resolveConflicts)'
+  webhook = system 'webhook' {
+    prStatusRoute = component 'routes/prStatus.ts (GET /api/prs/:number/issue)'
+    githubLib = component 'github.ts (findIssueForPr)'
 
-    panel -> gmClient 'ボタン押下'
+    prStatusRoute -> githubLib 'PR本文/ブランチ名からissue番号を逆引き'
   }
 
   github = system 'GitHub' {
     description 'issue・PR・リポジトリのホスティング先'
   }
 
-  maintainer -> panel 'コンフリクト中のPRでボタンを押す'
-  gmClient -> webhook.routes 'POST /api/jobs/resolve-conflicts'
-  webhook.githubLib -> github 'PR検索 (GitHub API)'
-  webhook.gitLib -> github 'clone / fetch / push'
-  webhook.claudeCli -> webhook.gitLib '解決済みファイルを書き込み'
+  maintainer -> userscript 'PRページを開く'
+  userscript.gmClient -> webhook.prStatusRoute 'GET /api/prs/:number/issue'
+  webhook.githubLib -> github 'PR本文・ブランチ名を取得'
+  maintainer -> userscript.panel 'コンフリクト解決ボタンを押す (#28機能を再利用)'
 }
 
 views {
@@ -48,21 +43,18 @@ views {
     include *
   }
 
-  view of webhook {
-    title 'webhook 内部構成'
+  view of userscript {
+    title 'userscript 内部構成'
     include *
   }
 
-  dynamic view resolveFlow {
-    title 'コンフリクト解決フロー'
-    maintainer -> userscript.panel 'ボタンを押す'
-    userscript.panel -> userscript.gmClient '呼び出す'
-    userscript.gmClient -> webhook.routes 'POST /resolve-conflicts'
-    webhook.routes -> webhook.job 'ジョブ開始'
-    webhook.job -> webhook.githubLib 'PRを検索'
-    webhook.job -> webhook.gitLib 'main をmerge'
-    webhook.job -> webhook.prompt 'コンフリクトを渡す'
-    webhook.prompt -> webhook.claudeCli '解決を依頼'
-    webhook.job -> github 'push'
+  dynamic view detectAndShow {
+    title 'PRページでのパネル表示判定フロー'
+    maintainer -> userscript.mainTs 'PRページを開く'
+    userscript.mainTs -> userscript.location 'currentPr() で判定'
+    userscript.mainTs -> userscript.gmClient 'getIssueForPr() 呼び出し'
+    userscript.gmClient -> webhook.prStatusRoute 'GET /api/prs/:number/issue'
+    webhook.prStatusRoute -> webhook.githubLib 'issue番号を逆引き'
+    userscript.mainTs -> userscript.panel 'issueNumber!=null かつ mergeable=false ならマウント'
   }
 }

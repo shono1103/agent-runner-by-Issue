@@ -42,6 +42,22 @@ function createFakeDocument(elements: FakeElement[]) {
   };
 }
 
+async function withFakeLocation<T>(
+  pathname: string,
+  fn: () => Promise<T> | T,
+): Promise<T> {
+  const g = globalThis as Record<string, unknown>;
+  const hadOwn = Object.hasOwn(g, "location");
+  const original = g.location;
+  g.location = { pathname };
+  try {
+    return await fn();
+  } finally {
+    if (hadOwn) g.location = original;
+    else delete g.location;
+  }
+}
+
 async function withFakeDocument<T>(
   elements: FakeElement[],
   fn: () => Promise<T> | T,
@@ -113,4 +129,25 @@ test("isSubIssueOverlayOpen: Sub-issue用のdata-testidを持つがrole=dialog�
       assert.equal(isSubIssueOverlayOpen(), false);
     },
   );
+});
+
+test("currentPr: PRページのURL (/owner/repo/pull/123) から owner/repo/prNumber を抽出できる", async () => {
+  await withFakeLocation("/octocat/hello-world/pull/123", async () => {
+    const { currentPr } = await import("./location.ts");
+    assert.deepEqual(currentPr(), { owner: "octocat", repo: "hello-world", prNumber: 123 });
+  });
+});
+
+test("currentPr: issueページのURLでは null を返す", async () => {
+  await withFakeLocation("/octocat/hello-world/issues/123", async () => {
+    const { currentPr } = await import("./location.ts");
+    assert.equal(currentPr(), null);
+  });
+});
+
+test("currentPr: それ以外のページURLでは null を返す", async () => {
+  await withFakeLocation("/octocat/hello-world", async () => {
+    const { currentPr } = await import("./location.ts");
+    assert.equal(currentPr(), null);
+  });
 });

@@ -7,6 +7,7 @@ import type {
   JobConflictResponse,
   JobStartResponse,
   JobStatusResponse,
+  PrIssueStatusResponse,
   PrStatusResponse,
   ResolveConflictsRequest,
   ScaffoldRequest,
@@ -154,6 +155,23 @@ export async function getPrStatus(ref: {
   return gmJson<PrStatusResponse>({
     method: "GET",
     path: `/api/issues/pr-status?${params.toString()}`,
+    timeoutMs: 10_000,
+  });
+}
+
+/**
+ * PRページ用: PR番号から対応するissue番号とmergeable状態を取得する。
+ * PRページの「コンフリクト解決」ボタンの表示可否判定に使う。
+ */
+export async function getIssueForPr(ref: {
+  owner: string;
+  repo: string;
+  prNumber: number;
+}): Promise<PrIssueStatusResponse> {
+  const params = new URLSearchParams({ owner: ref.owner, repo: ref.repo });
+  return gmJson<PrIssueStatusResponse>({
+    method: "GET",
+    path: `/api/prs/${ref.prNumber}/issue?${params.toString()}`,
     timeoutMs: 10_000,
   });
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Octokit } from "@octokit/rest";
-import { findOpenPrForIssue, type GithubClient } from "./github.ts";
+import { findIssueForPr, findOpenPrForIssue, type GithubClient } from "./github.ts";
 
 type FakePr = {
   number: number;
@@ -15,6 +15,14 @@ function makeFakeClient(prs: FakePr[]): GithubClient {
     rest: { pulls: { list } },
     paginate: async (fn: unknown, params: unknown) =>
       (await (fn as typeof list)(params)).data,
+  } as unknown as Octokit;
+  return { octokit, selfLogin: "agent-runner-bot" };
+}
+
+function makeFakeClientForGet(pr: FakePr): GithubClient {
+  const get = async (_params: unknown) => ({ data: pr });
+  const octokit = {
+    rest: { pulls: { get } },
   } as unknown as Octokit;
   return { octokit, selfLogin: "agent-runner-bot" };
 }
@@ -59,4 +67,40 @@ test("findOpenPrForIssue: 複数該当した場合は番号が最大の (最新�
   const result = await findOpenPrForIssue(client, { owner: "o", repo: "r", issueNumber: 3 });
 
   assert.deepEqual(result, { number: 25, branch: "agent-runner/issue-3-cccc3333" });
+});
+
+test("findIssueForPr: PR本文に Closes #<N> が含まれる場合、その issue 番号を返す", async () => {
+  const client = makeFakeClientForGet({
+    number: 30,
+    body: "実装しました。\n\nCloses #12",
+    head: { ref: "some-other-branch" },
+  });
+
+  const result = await findIssueForPr(client, "o", "r", 30);
+
+  assert.equal(result, 12);
+});
+
+test("findIssueForPr: 本文に無いが head ブランチ名が agent-runner/issue-<N>- の場合、その issue 番号を返す", async () => {
+  const client = makeFakeClientForGet({
+    number: 31,
+    body: "説明のみ",
+    head: { ref: "agent-runner/issue-9-dddd4444" },
+  });
+
+  const result = await findIssueForPr(client, "o", "r", 31);
+
+  assert.equal(result, 9);
+});
+
+test("findIssueForPr: どちらの手がかりも無い場合は null を返す", async () => {
+  const client = makeFakeClientForGet({
+    number: 32,
+    body: "手動で作成したPRです",
+    head: { ref: "manual-fix" },
+  });
+
+  const result = await findIssueForPr(client, "o", "r", 32);
+
+  assert.equal(result, null);
 });

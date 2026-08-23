@@ -1,101 +1,51 @@
 -- allium: 3
 
-entity PullRequest {
-    branch: String
+entity Pr {
+    number: Integer
+    issue_number: Integer?
     mergeable: Boolean
+
+    has_linked_issue: issue_number != null
+    should_show_panel: has_linked_issue and not mergeable
+    panels: PrPanel with pr = this
 }
 
-entity Job {
-    pr: PullRequest
-    status: running | succeeded | failed
-    had_conflict: Boolean
-    pushed: Boolean
-
-    transitions status {
-        running -> succeeded
-        running -> failed
-        terminal: succeeded
-        terminal: failed
-    }
-
-    conflict_files: ConflictFile with job = this
-    all_resolved: conflict_files.all(f => f.resolved = true and f.unresolvable = false)
+entity PrPanel {
+    pr: Pr
+    visible: Boolean
 }
 
-entity ConflictFile {
-    job: Job
-    path: String
-    resolved: Boolean
-    unresolvable: Boolean
-}
-
-rule StartResolveConflicts {
-    when: RunResolveConflicts(pr)
-    requires:
-        not pr.mergeable
+rule OpenPrPage {
+    when: PrPageOpened(pr)
     ensures:
-        Job.created(
-            pr: pr
-            status: running
-            had_conflict: false
-            pushed: false
-        )
+        PrPanel.created(pr: pr, visible: pr.should_show_panel)
 }
 
-rule NoConflictFound {
-    when: MergeCheckedClean(job)
-    requires:
-        job.status = running
-        job.had_conflict = false
+rule PrBecomesMergeable {
+    when: pr: Pr.mergeable transitions_to true
+    requires: pr.panels.any(p => p.visible = true)
     ensures:
-        job.status = succeeded
-        job.pushed = false
+        pr.panels.first.visible = false
 }
 
-rule ConflictDetected {
-    when: ConflictFileFound(job, path)
-    requires: job.status = running
+rule PrLosesIssueLink {
+    when: PrRelinkChecked(pr)
+    requires: not pr.has_linked_issue
     ensures:
-        job.had_conflict = true
-        ConflictFile.created(job: job, path: path, resolved: false, unresolvable: false)
+        pr.panels.all(p => p.visible = false)
 }
 
-rule PushAfterAllResolved {
-    when: AllConflictsResolved(job)
-    requires:
-        job.status = running
-        job.had_conflict = true
-        job.all_resolved = true
-    ensures:
-        job.status = succeeded
-        job.pushed = true
-}
-
-rule FailOnUnresolvable {
-    when: UnresolvableConflict(job, path)
-    requires: job.status = running
-    ensures:
-        job.status = failed
-        job.pushed = false
-        ConflictFile.created(job: job, path: path, resolved: false, unresolvable: true)
-}
-
-invariant NoPushWithoutSuccess {
-    for job in Jobs where pushed = true:
-        job.status = succeeded
-}
-
-invariant NoPushOnFailure {
-    for job in Jobs where status = failed:
-        job.pushed = false
+invariant PanelVisibleOnlyWhenShould {
+    for pr in Prs:
+        pr.panels.all(p => p.visible = pr.should_show_panel) when pr.panels.count > 0
 }
 
 actor Maintainer {}
 
-surface ResolveConflictButton {
+surface ResolveConflictButtonOnPrPage {
     actor: Maintainer
-    visible_when: not pr.mergeable
+    visible_when: pr.should_show_panel
     triggers: RunResolveConflicts(pr)
 }
 
-open question "「取り込みマージ」の厳密な意味的統合の度合いは未確定。単純なgit mergeとclaude cliによるマーカー解決を前提としている"
+open question "issue番号の特定に失敗するケース (Closesの記法揺れ・ブランチ名変更など) の扱いは未確定。今回はnullとして扱い、パネルを表示しない方針とする"

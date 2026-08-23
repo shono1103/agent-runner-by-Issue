@@ -21,6 +21,29 @@ export function issueKey(issue: IssueLocation): string {
   return `${issue.owner}/${issue.repo}#${issue.issueNumber}`;
 }
 
+export type PrLocation = {
+  owner: string;
+  repo: string;
+  prNumber: number;
+};
+
+// currentIssue() (issues/<N>) と対になる、PRページ (pull/<N>) 用の判定。
+const PR_RE = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#]|$)/;
+
+export function currentPr(): PrLocation | null {
+  const m = PR_RE.exec(location.pathname);
+  if (!m) return null;
+  const owner = m[1];
+  const repo = m[2];
+  const prNumber = m[3];
+  if (!owner || !repo || !prNumber) return null;
+  return { owner, repo, prNumber: Number(prNumber) };
+}
+
+export function prKey(pr: PrLocation): string {
+  return `${pr.owner}/${pr.repo}#pull#${pr.prNumber}`;
+}
+
 /**
  * GitHubのSub-issues一覧から子issueを開いた際、issueが重なった状態 (子issueが
  * オーバーレイ/ダイアログとして親issueページの上に重ねて表示される状態) を検知する。
