@@ -3,7 +3,9 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
+    // テストは node で走らせるが、テスト対象のモジュール (location.ts / ui/*.ts) が
+    // DOM グローバルを使うため、tsconfig.json と同じ lib を持たせる必要がある。
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
