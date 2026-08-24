@@ -112,8 +112,22 @@ EOF
 echo "[OK] $UNIT_FILE を作成しました"
 
 systemctl --user daemon-reload
-systemctl --user enable --now "${SERVICE_NAME}.service"
-echo "[OK] ${SERVICE_NAME}.service を有効化・起動しました"
+systemctl --user enable "${SERVICE_NAME}.service" >/dev/null
+
+# enable --now ではなく restart を使う。--now は「停止中なら起動する」だけで、
+# 既に動いていると何もしない。unit を書き換えたのにプロセスは古い環境変数を
+# 握ったまま、という状態になる (#50)。PATH を直すために再実行する、という
+# 使い方が主なので、ここが反映されないと再実行の意味が無い。
+# restart は停止中なら起動、動作中なら再起動するので、初回・再実行のどちらでもよい。
+was_active=0
+systemctl --user is-active --quiet "${SERVICE_NAME}.service" && was_active=1
+
+systemctl --user restart "${SERVICE_NAME}.service"
+if [[ "$was_active" -eq 1 ]]; then
+  echo "[OK] ${SERVICE_NAME}.service を再起動しました (新しい unit を反映)"
+else
+  echo "[OK] ${SERVICE_NAME}.service を有効化・起動しました"
+fi
 
 echo
 if loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
