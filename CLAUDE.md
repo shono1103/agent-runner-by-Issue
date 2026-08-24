@@ -31,6 +31,16 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   (テストは `.env.test` を指している)。
 * `.env` を書き換えたら webhook を**再起動**する。プロセスは起動時の値を握ったままで、
   `/api/health` の `dryRun` にも古い値が出続ける。
+* claude / git を `spawn()` で起動するとき、コマンド名の解決に使われるのは
+  **子プロセスに渡す env の `PATH`** で、親プロセスの `PATH` ではない。systemd 常駐では
+  unit の `Environment=PATH=` が全て (`~/.profile` も `~/.bashrc` も読まれない) なので、
+  `webhook/scripts/install-service.sh` の `path_append` に積み忘れると
+  「対話シェルからは動くのにサービスからだけ ENOENT」になる。claude は
+  `~/.local/bin` に入るため、`/usr/bin` 等の既定 PATH には無い。
+* `spawn` の `ENOENT` は「コマンドが PATH に無い」場合と「`cwd` が存在しない」場合の
+  どちらでも出る。`message` も `code` も `path` も同じで区別できないため、
+  `run-claude.ts` の `describeSpawnError()` のように
+  `findExecutable()` で実際に解決できるかを見てから原因を決めること。
 * リモートへの反映は用途でスクリプトを使い分ける。`install-remote.sh` は**初回のみ**
   (`setup-env.sh` を対話起動して `.env` を作る)。2回目以降の更新は
   `update-remote.sh` を使う (`.env` に触れず、同期 → `pnpm install` → サービス再起動 →

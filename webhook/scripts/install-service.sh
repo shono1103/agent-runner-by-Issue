@@ -46,11 +46,50 @@ if [[ ! -f "$REPO_ROOT/webhook/.env" ]]; then
   exit 1
 fi
 
-# node/pnpm の bin ディレクトリを PATH に積む。nvm 経由だと corepack 由来の pnpm も
-# 同じディレクトリにあることが多いが、別経路でインストールされている場合に備えて両方積む。
+# サービスに渡す PATH を組み立てる。
+#
+# ここが systemd プロセスの PATH の全てになる (~/.profile も ~/.bashrc も読まれない)。
+# しかも webhook は claude を `spawn("claude", ...)` と名前で起動し、その解決には
+# 子プロセスに渡す env の PATH が使われる。つまり claude のディレクトリをここに
+# 積み忘れると、対話シェルからは動くのに、常駐サービスからだけ
+# 「claude cli 失敗 (spawn): spawn claude ENOENT」で落ちる。
+# claude の公式インストーラは ~/.local/bin に置くが、そこは systemd の既定 PATH には
+# 無いため、node/pnpm と同じように command -v で拾って明示的に積む。
 NODE_DIR="$(dirname "$NODE_BIN")"
 PNPM_DIR="$(dirname "$PNPM_BIN")"
-SERVICE_PATH="$NODE_DIR:$PNPM_DIR:/usr/local/bin:/usr/bin:/bin"
+CLAUDE_BIN="$(command -v claude || true)"
+
+SERVICE_PATH=""
+path_append() {
+  local dir="$1"
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+  case ":$SERVICE_PATH:" in
+    *":$dir:"*) return 0 ;; # 既に入っている
+  esac
+  if [[ -z "$SERVICE_PATH" ]]; then SERVICE_PATH="$dir"; else SERVICE_PATH="$SERVICE_PATH:$dir"; fi
+}
+
+path_append "$NODE_DIR"
+# nvm 経由だと corepack 由来の pnpm も node と同じディレクトリにあるが、
+# 別経路でインストールされている場合に備えて両方積む (重複は path_append が弾く)。
+path_append "$PNPM_DIR"
+if [[ -n "$CLAUDE_BIN" ]]; then
+  path_append "$(dirname "$CLAUDE_BIN")"
+fi
+# claude を後から入れ直した場合や、allium/likec4 など他のユーザーローカルな CLI のために
+# ~/.local/bin も積んでおく。
+path_append "$HOME/.local/bin"
+path_append /usr/local/bin
+path_append /usr/bin
+path_append /bin
+
+if [[ -z "$CLAUDE_BIN" ]]; then
+  echo "[INFO] claude が見つかりません。このままだと全てのジョブが spawn ENOENT で失敗します。" >&2
+  echo "       claude をインストール・ログインしてから、このスクリプトを再実行してください" >&2
+  echo "       (PATH は再実行時に取り直されます)。" >&2
+else
+  echo "[OK] claude: $CLAUDE_BIN"
+fi
 
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT_FILE" <<EOF
