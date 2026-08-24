@@ -31,6 +31,10 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   (テストは `.env.test` を指している)。
 * `.env` を書き換えたら webhook を**再起動**する。プロセスは起動時の値を握ったままで、
   `/api/health` の `dryRun` にも古い値が出続ける。
+* リモートへの反映は用途でスクリプトを使い分ける。`install-remote.sh` は**初回のみ**
+  (`setup-env.sh` を対話起動して `.env` を作る)。2回目以降の更新は
+  `update-remote.sh` を使う (`.env` に触れず、同期 → `pnpm install` → サービス再起動 →
+  `/api/health` 確認まで通す)。**コードを同期しただけでは反映されない**。
 * PR 作成ジョブが書き出す仕様の置き場所は `.agent-runner/issues/<issue番号>/` で、
   パスの定義は `webhook/src/spec-dir.ts` の `specDirFor()` の1箇所だけ。
   `.agent-runner/source` / `.agent-runner/generated` 固定に戻さないこと
@@ -47,6 +51,7 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
 | userscript をビルドし続ける | `pnpm --filter userscript dev` (= `vite build --watch`) |
 | 型チェック | `pnpm run typecheck` |
 | 生成物を検証する | `likec4 validate --json --no-layout <dir>` / `allium check <file>` |
+| リモートを最新コードに更新する | `webhook/scripts/update-remote.sh` (クライアントPCから) |
 
 ## 言語
 
