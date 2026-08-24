@@ -109,6 +109,9 @@ webhook は claude を `spawn("claude", ...)` と名前で起動し、その解�
 webhook は起動時にも claude を PATH 上で解決できるか確認し、`claude cli: <path>` か
 `[NG] claude が PATH 上に見つかりません` をログに出す。
 
+`install-service.sh` は動作中のサービスに対しても `restart` をかけるので、unit を作り直す
+目的で何度でも再実行してよい (`daemon-reload` だけでは既存プロセスに反映されない)。
+
 ```sh
 ssh -t shonoshono-home "cd '~/opt/agent-runner-by-Issue' && webhook/scripts/install-service.sh"
 

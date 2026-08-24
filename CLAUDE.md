@@ -41,6 +41,10 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   どちらでも出る。`message` も `code` も `path` も同じで区別できないため、
   `run-claude.ts` の `describeSpawnError()` のように
   `findExecutable()` で実際に解決できるかを見てから原因を決めること。
+* systemd unit を書き換えたら `daemon-reload` だけでは反映されない。既存プロセスは
+  起動時の環境変数を握ったままなので **`restart` が要る**。`enable --now` は
+  「停止中なら起動」するだけで、動作中のサービスには何もしない。
+  `install-service.sh` は `enable` + `restart` に分けてある。
 * `routes/jobs.ts` の POST ルートは順序が意味を持つ。**GitHub クライアントの生成 →
   ロックの確認 → ジョブ生成 → `acquire` → `.finally(release)`** の順を崩さないこと。
   `createGithubClient()` はトークン検証で `GET /user` を叩くので throw しうる。
