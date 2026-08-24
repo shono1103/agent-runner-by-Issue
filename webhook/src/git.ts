@@ -182,6 +182,63 @@ export async function commitAll(ws: GitWorkspace, message: string): Promise<void
   assertOk(await execGit(["-C", ws.cloneDir, "commit", "-m", message], ws.env), "commit");
 }
 
+/** 現在の HEAD の commit sha。 */
+export async function revParseHead(ws: GitWorkspace): Promise<string> {
+  const result = await execGit(["-C", ws.cloneDir, "rev-parse", "HEAD"], ws.env);
+  assertOk(result, "rev-parse HEAD");
+  return result.stdout.trim();
+}
+
+/**
+ * 作業ツリー全体 (未追跡ファイル含む) を一旦 stage して差分を取得し、index は
+ * 元の状態 (unstaged) に戻す。「最小限のコミットに分割する」計画を立てる材料として、
+ * ファイル単位の add をまだ確定させずに全体の diff だけを見たい場合に使う。
+ */
+export async function stageAllAndDiff(ws: GitWorkspace): Promise<string> {
+  assertOk(await execGit(["-C", ws.cloneDir, "add", "-A"], ws.env), "add -A");
+  const result = await execGit(["-C", ws.cloneDir, "diff", "--cached"], ws.env);
+  assertOk(result, "diff --cached");
+  assertOk(await execGit(["-C", ws.cloneDir, "reset"], ws.env), "reset");
+  return result.stdout;
+}
+
+export type PlannedCommit = { message: string; files: string[] };
+export type CreatedCommit = { sha: string; message: string };
+
+/**
+ * 複数のファイルグループをそれぞれ個別に commit する
+ * (「最小限のコミットに分割する」の実現。`commitAll` の単一コミット固定を置き換える)。
+ * ファイルが空のグループはスキップする。
+ */
+export async function commitEach(
+  ws: GitWorkspace,
+  commits: PlannedCommit[],
+): Promise<CreatedCommit[]> {
+  const created: CreatedCommit[] = [];
+  for (const c of commits) {
+    if (c.files.length === 0) continue;
+    assertOk(await execGit(["-C", ws.cloneDir, "add", "--", ...c.files], ws.env), "add");
+    assertOk(await execGit(["-C", ws.cloneDir, "commit", "-m", c.message], ws.env), "commit");
+    const sha = await revParseHead(ws);
+    created.push({ sha, message: c.message });
+  }
+  return created;
+}
+
+/** 1 commit の内容 (patch) を取得する。 */
+export async function showCommitDiff(ws: GitWorkspace, sha: string): Promise<string> {
+  const result = await execGit(["-C", ws.cloneDir, "show", "--format=", sha], ws.env);
+  assertOk(result, "show");
+  return result.stdout;
+}
+
+/** `baseSha` から現在の HEAD までの累積差分 (ブランチ diff 全体のレビュー用)。 */
+export async function diffSince(ws: GitWorkspace, baseSha: string): Promise<string> {
+  const result = await execGit(["-C", ws.cloneDir, "diff", baseSha, "HEAD"], ws.env);
+  assertOk(result, "diff");
+  return result.stdout;
+}
+
 export async function diffStatSinceParent(ws: GitWorkspace): Promise<string> {
   const result = await execGit(["-C", ws.cloneDir, "diff", "--stat", "HEAD~1"], ws.env);
   return result.stdout;

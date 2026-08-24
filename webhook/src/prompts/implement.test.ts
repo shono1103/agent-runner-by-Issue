@@ -25,3 +25,12 @@ test("buildImplementPrompt: 仕様ディレクトリの削除・移動を禁じ�
   const { userPrompt } = buildImplementPrompt(ref, "タイトル");
   assert.match(userPrompt, /削除・移動しないでください/);
 });
+
+test("buildImplementPrompt: デフォルトワークフロー (ラフ実装優先・コミット分割・レビュー・5W1H) への言及を含む", () => {
+  const { userPrompt } = buildImplementPrompt(ref, "タイトル");
+  assert.match(userPrompt, /デフォルトワークフロー/);
+  assert.match(userPrompt, /ラフな実装/);
+  assert.match(userPrompt, /複数コミットに分割/);
+  assert.match(userPrompt, /レビューする/);
+  assert.match(userPrompt, /5W1H/);
+});

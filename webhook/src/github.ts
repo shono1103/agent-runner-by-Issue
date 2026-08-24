@@ -188,6 +188,25 @@ function splitForComment(content: string, maxLen: number): string[] {
   return parts;
 }
 
+/**
+ * PR への指摘コメントを投稿する。GitHub API 上、PR は issue の一種であり
+ * `issues.createComment` (issue_number = PR番号) で投稿できる
+ * (レビューコメントAPIのようなインライン位置指定は行わない、PR全体への通常コメント)。
+ */
+export async function createPrComment(
+  client: GithubClient,
+  ref: IssueRef,
+  prNumber: number,
+  body: string,
+): Promise<void> {
+  await client.octokit.rest.issues.createComment({
+    owner: ref.owner,
+    repo: ref.repo,
+    issue_number: prNumber,
+    body,
+  });
+}
+
 export type CreatePullRequestInput = {
   ref: IssueRef;
   branch: string;
