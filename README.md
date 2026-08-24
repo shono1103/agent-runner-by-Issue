@@ -105,6 +105,39 @@ ssh shonoshono-home 'systemctl --user status agent-runner-webhook.service --no-p
 ssh shonoshono-home 'journalctl --user -u agent-runner-webhook.service -f'
 ```
 
+### リモートを最新コードに更新する
+
+一度インストールしたあと、コードを更新してリモートに反映するには
+**クライアントPCから** `webhook/scripts/update-remote.sh` を実行する。
+`install-remote.sh` は初回インストール用 (`setup-env.sh` を対話起動して `.env` を作る)
+なので、更新のたびに使うには重い。`update-remote.sh` は `.env` に一切触れず、
+次を非対話で通す。
+
+1. ローカルで `pnpm run typecheck` (壊れたコードを配らないためのガード。`--skip-check` で省略)
+2. `rsync` で同期 (`.gitignore` 準拠。`webhook/.env` と `.git` は除外)
+3. リモートで `pnpm install --frozen-lockfile`
+4. `agent-runner-webhook.service` を再起動し、**MainPID が変わったこと**を確認
+5. `GET /api/health` を叩き、`.env` の `AGENT_RUNNER_DRY_RUN` と応答の `dryRun` が
+   一致することを確認
+
+```sh
+./webhook/scripts/update-remote.sh                    # 既定 (shonoshono-home:~/opt/agent-runner-by-Issue)
+./webhook/scripts/update-remote.sh -y                 # 確認プロンプトなし
+./webhook/scripts/update-remote.sh --no-delete        # ローカルに無いファイルをリモートに残す
+```
+
+同期前に rsync の dry-run 結果を表示して確認を取る。既定では `--delete` 付き
+(ローカルで削除したファイルがリモートに残り続けて実体が食い違うのを防ぐため)。
+`node_modules/`・`dist/`・`.env` は除外パターン側で守られるので消えない。
+
+接続先が未セットアップ (リモートに `webhook/.env` が無い) の場合は、`.env` を作りには
+行かず `install-remote.sh` を案内して終了する。サービスが未登録なら同期だけ済ませて
+`install-service.sh` を案内する。
+
+5. の確認を入れているのは、`systemctl status` では「プロセスが生きている」ことしか
+分からないため。実際に HTTP が返り、しかも `.env` と食い違っていないところまで見ないと、
+古いプロセスが残っている状態 (「webhook を起動する」の下記参照) を見逃す。
+
 ### webhook を起動する
 
 ```sh
