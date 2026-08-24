@@ -117,6 +117,20 @@ ssh shonoshono-home 'systemctl --user status agent-runner-webhook.service --no-p
 ssh shonoshono-home 'journalctl --user -u agent-runner-webhook.service -f'
 ```
 
+ジョブの開始・終了はここに出る。失敗したときはエラー内容に加えて、ジョブが溜めた
+ログの末尾5行も添える (診断の実体はそこにあるため)。
+
+```
+[job] create-pr shono1103/agent-runner-by-Issue#45 started id=88d83e9a-...
+[job] create-pr shono1103/agent-runner-by-Issue#45 failed id=88d83e9a-... (phase=claude 実行中, 12.3s, $0.4210): claude cli 失敗 (spawn): ...
+       | 隔離 clone を作成
+       | claude 実行中
+```
+
+開始も出しているのは、ハングして終了に到達しないジョブがログ上に一切現れないのを
+避けるため (失敗と区別がつかなくなる)。
+
+
 ### リモートを最新コードに更新する
 
 一度インストールしたあと、コードを更新してリモートに反映するには
