@@ -43,21 +43,27 @@ jobsRoute.post("/convert", async (c) => {
   const ref: IssueRef = parsed.data;
   const targets = parsed.data.targets as ConvertTarget[];
 
-  const job = jobStore.create("convert", ref);
-  const acquired = jobLocks.acquire(ref, job.id, false);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, false);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, false);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue に対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue に対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  const job = jobStore.create("convert", ref);
+  jobLocks.acquire(ref, job.id, false);
+
   runConvertJob(job, client, ref, targets).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
@@ -74,21 +80,27 @@ jobsRoute.post("/create-pr", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("create-pr", ref);
-  const acquired = jobLocks.acquire(ref, job.id, true);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, true);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, true);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue またはリポジトリに対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue またはリポジトリに対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  const job = jobStore.create("create-pr", ref);
+  jobLocks.acquire(ref, job.id, true);
+
   runCreatePrJob(job, client, ref).finally(() => jobLocks.release(ref, true));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
@@ -105,22 +117,28 @@ jobsRoute.post("/resolve-conflicts", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("resolve-conflicts", ref);
-  // create-pr と同じくリポジトリ単位でもロックする (git push が競合するため)。
-  const acquired = jobLocks.acquire(ref, job.id, true);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, true);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, true);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue またはリポジトリに対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue またはリポジトリに対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  // create-pr と同じくリポジトリ単位でもロックする (git push が競合するため)。
+  const job = jobStore.create("resolve-conflicts", ref);
+  jobLocks.acquire(ref, job.id, true);
+
   runResolveConflictsJob(job, client, ref).finally(() => jobLocks.release(ref, true));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
@@ -138,21 +156,27 @@ jobsRoute.post("/investigate", async (c) => {
   const ref: IssueRef = parsed.data;
 
   // 調査は push を伴わないため、リポジトリ単位ではなく Issue 単位のロックで足りる。
-  const job = jobStore.create("investigate", ref);
-  const acquired = jobLocks.acquire(ref, job.id, false);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, false);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, false);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue に対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue に対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  const job = jobStore.create("investigate", ref);
+  jobLocks.acquire(ref, job.id, false);
+
   runInvestigateJob(job, client, ref).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
@@ -169,21 +193,27 @@ jobsRoute.post("/clarify", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("clarify", ref);
-  const acquired = jobLocks.acquire(ref, job.id, false);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, false);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, false);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue に対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue に対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  const job = jobStore.create("clarify", ref);
+  jobLocks.acquire(ref, job.id, false);
+
   runClarifyJob(job, client, ref).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
@@ -200,21 +230,27 @@ jobsRoute.post("/draft", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("draft", ref);
-  const acquired = jobLocks.acquire(ref, job.id, false);
-  if (!acquired) {
-    const holder = jobLocks.holderOf(ref, false);
+  // GitHub クライアントの生成はロックを取る前に済ませる。
+  // createGithubClient() はトークン検証のため GET /user を叩くので throw しうる。
+  // ロック取得より後に置くと、throw した瞬間にロックもジョブも放置され、
+  // そのボタンが webhook 再起動まで永久に 409 になる (#48)。
+  // ロック取得と .finally の登録の間に、throw しうる処理を挟まないこと。
+  const client = await createGithubClient(config.githubToken);
+
+  // ロックの確認はジョブを作る前に行う。作ってから 409 で捨てると、使われないジョブが
+  // queued のまま残り (GC は完了済みしか消さない)、ログにも紛らわしい started が出る。
+  // ここから acquire までの間に await が無いので、確認と取得の間に割り込みは起きない。
+  const holder = jobLocks.holderOf(ref, false);
+  if (holder) {
     return c.json<JobConflictResponse>(
-      {
-        error: "locked",
-        jobId: holder ?? job.id,
-        message: "この Issue に対するジョブが既に実行中です",
-      },
+      { error: "locked", jobId: holder, message: "この Issue に対するジョブが既に実行中です" },
       409,
     );
   }
 
-  const client = await createGithubClient(config.githubToken);
+  const job = jobStore.create("draft", ref);
+  jobLocks.acquire(ref, job.id, false);
+
   runDraftJob(job, client, ref).finally(() => jobLocks.release(ref, false));
 
   return c.json<JobStartResponse>({ jobId: job.id }, 202);
