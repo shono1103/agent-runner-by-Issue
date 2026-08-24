@@ -97,6 +97,18 @@ GitHub トークンは次の2方式から選べる。
 動かし続けるための `loginctl enable-linger` だけは権限が無いと失敗するため、その場合は
 提示される `sudo loginctl enable-linger <user>` を別途実行する。
 
+サービスの `Environment=PATH=` は `install-service.sh` が組み立てる。systemd プロセスは
+`~/.profile` も `~/.bashrc` も読まないため、ここに書かれた PATH が全てになる。
+webhook は claude を `spawn("claude", ...)` と名前で起動し、その解決には**子プロセスに
+渡す env の PATH** が使われるので、claude のディレクトリ (公式インストーラなら
+`~/.local/bin`) が積まれていないと、対話シェルからは動くのに常駐サービスからだけ
+`claude cli 失敗 (spawn): spawn claude ENOENT` で落ちる。`install-service.sh` は
+`command -v claude` で場所を拾って積み、見つからなければ警告する。claude を
+後から入れた場合は `install-service.sh` を再実行して PATH を取り直すこと。
+
+webhook は起動時にも claude を PATH 上で解決できるか確認し、`claude cli: <path>` か
+`[NG] claude が PATH 上に見つかりません` をログに出す。
+
 ```sh
 ssh -t shonoshono-home "cd '~/opt/agent-runner-by-Issue' && webhook/scripts/install-service.sh"
 

@@ -1,8 +1,37 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { scrubEnv } from "../env.ts";
+import { findExecutable } from "../which.ts";
 
 const KILL_GRACE_MS = 5_000;
+
+/**
+ * spawn 失敗の理由を、そのまま画面に出して意味が分かる文言にする。
+ *
+ * 素の "spawn claude ENOENT" だけだと何を直せばいいのか分からない。ただし ENOENT は
+ * 「claude が PATH に無い」ときにも「cwd が存在しない」ときにも同じ形で出る
+ * (どちらも message は "spawn claude ENOENT"、code も path も同じ) ので、
+ * メッセージだけでは区別できない。実際に claude を解決できるかを見てから原因を決める。
+ *
+ * spawn がコマンド名を解決するのに使うのは子プロセスに渡す env の PATH なので、
+ * systemd で常駐させると unit の Environment=PATH が全てになる
+ * (対話シェルからは動くのにサービスからだけ失敗する、という出方をする)。
+ */
+function describeSpawnError(e: NodeJS.ErrnoException, cwd: string): string {
+  const raw = String(e?.message ?? e);
+  if (e?.code !== "ENOENT") return raw;
+
+  const bin = findExecutable("claude");
+  if (bin === null) {
+    return (
+      `${raw}: claude コマンドが PATH 上に見つかりません。systemd で常駐させている場合は、` +
+      "unit の Environment=PATH に claude のディレクトリが含まれていない可能性があります " +
+      "(webhook/scripts/install-service.sh を再実行してください)。" +
+      ` PATH=${process.env.PATH ?? "(未設定)"}`
+    );
+  }
+  return `${raw}: claude は ${bin} にあります。cwd が存在しない可能性があります (cwd=${cwd})。`;
+}
 
 export type ClaudeFailure =
   | { kind: "spawn"; detail: string }
@@ -148,7 +177,7 @@ export async function runClaude<T = unknown>(
     return {
       ok: false,
       costUsd: 0,
-      failure: { kind: "spawn", detail: String((e as Error)?.message ?? e) },
+      failure: { kind: "spawn", detail: describeSpawnError(e as NodeJS.ErrnoException, opts.cwd) },
     };
   } finally {
     clearTimeout(softTimer);
