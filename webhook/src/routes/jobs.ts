@@ -43,7 +43,7 @@ jobsRoute.post("/convert", async (c) => {
   const ref: IssueRef = parsed.data;
   const targets = parsed.data.targets as ConvertTarget[];
 
-  const job = jobStore.create("convert");
+  const job = jobStore.create("convert", ref);
   const acquired = jobLocks.acquire(ref, job.id, false);
   if (!acquired) {
     const holder = jobLocks.holderOf(ref, false);
@@ -74,7 +74,7 @@ jobsRoute.post("/create-pr", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("create-pr");
+  const job = jobStore.create("create-pr", ref);
   const acquired = jobLocks.acquire(ref, job.id, true);
   if (!acquired) {
     const holder = jobLocks.holderOf(ref, true);
@@ -105,7 +105,7 @@ jobsRoute.post("/resolve-conflicts", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("resolve-conflicts");
+  const job = jobStore.create("resolve-conflicts", ref);
   // create-pr と同じくリポジトリ単位でもロックする (git push が競合するため)。
   const acquired = jobLocks.acquire(ref, job.id, true);
   if (!acquired) {
@@ -138,7 +138,7 @@ jobsRoute.post("/investigate", async (c) => {
   const ref: IssueRef = parsed.data;
 
   // 調査は push を伴わないため、リポジトリ単位ではなく Issue 単位のロックで足りる。
-  const job = jobStore.create("investigate");
+  const job = jobStore.create("investigate", ref);
   const acquired = jobLocks.acquire(ref, job.id, false);
   if (!acquired) {
     const holder = jobLocks.holderOf(ref, false);
@@ -169,7 +169,7 @@ jobsRoute.post("/clarify", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("clarify");
+  const job = jobStore.create("clarify", ref);
   const acquired = jobLocks.acquire(ref, job.id, false);
   if (!acquired) {
     const holder = jobLocks.holderOf(ref, false);
@@ -200,7 +200,7 @@ jobsRoute.post("/draft", async (c) => {
   }
   const ref: IssueRef = parsed.data;
 
-  const job = jobStore.create("draft");
+  const job = jobStore.create("draft", ref);
   const acquired = jobLocks.acquire(ref, job.id, false);
   if (!acquired) {
     const holder = jobLocks.holderOf(ref, false);
