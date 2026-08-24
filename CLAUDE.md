@@ -41,6 +41,11 @@ pnpm workspaces のモノレポ。`webhook/` (Node/Hono、claude cli と GitHub 
   どちらでも出る。`message` も `code` も `path` も同じで区別できないため、
   `run-claude.ts` の `describeSpawnError()` のように
   `findExecutable()` で実際に解決できるかを見てから原因を決めること。
+* `routes/jobs.ts` の POST ルートは順序が意味を持つ。**GitHub クライアントの生成 →
+  ロックの確認 → ジョブ生成 → `acquire` → `.finally(release)`** の順を崩さないこと。
+  `createGithubClient()` はトークン検証で `GET /user` を叩くので throw しうる。
+  ロック取得と `.finally` の登録の間に throw しうる処理を挟むと、ロックが解放されず
+  そのボタンが webhook 再起動まで永久に 409 になる。
 * リモートへの反映は用途でスクリプトを使い分ける。`install-remote.sh` は**初回のみ**
   (`setup-env.sh` を対話起動して `.env` を作る)。2回目以降の更新は
   `update-remote.sh` を使う (`.env` に触れず、同期 → `pnpm install` → サービス再起動 →
