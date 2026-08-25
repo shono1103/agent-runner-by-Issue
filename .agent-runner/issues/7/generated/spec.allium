@@ -1,0 +1,154 @@
+-- allium: 3
+
+-- Issue #7: PR作成ジョブ (createPr.ts) の実行における「デフォルトワークフロー定義」を
+-- 形式化する。要件定義+テストのラフ作成 → 最小コミット分割 → CI通過 →
+-- コミットごとのレビュー → ブランチdiff全体のレビュー → 懸念をPRの指摘コメントに残す、
+-- という順序と、各コミットメッセージへの5W1H記載を保証する。
+--
+-- 「デフォルトワークフロー定義」自体の保存場所・適用方法 (createPr.ts のプロンプト
+-- 生成ロジックに直接埋め込むか、独立したworkflow定義ファイルとして持つか) は
+-- 未確定のため open question とする。
+
+enum JobStatus { running | succeeded | failed }
+enum CiResult { not_run | passed | failed }
+enum ReviewScope { commit | branch_diff }
+
+entity Job {
+    status: JobStatus
+    rough_impl_done: Boolean               -- 要件定義+テストのラフ作成が完了したか
+    ci_result: CiResult
+    commits: Commit with job = this
+    branch_reviews: BranchReview with job = this
+    concerns: Concern with job = this
+    has_branch_review: branch_reviews.any()
+    all_commits_reviewed: commits.all(c => c.reviewed)
+    all_commits_5w1h: commits.all(c => c.satisfies_5w1h)
+
+    transitions status {
+        running -> succeeded
+        running -> failed
+        terminal: succeeded
+        terminal: failed
+    }
+}
+
+entity Commit {
+    job: Job
+    has_who: Boolean                        -- 5W1H: 誰が
+    has_what: Boolean                       -- 5W1H: 何を
+    has_when: Boolean                       -- 5W1H: いつ
+    has_where: Boolean                      -- 5W1H: どこで
+    has_why: Boolean                        -- 5W1H: なぜ
+    has_how: Boolean                        -- 5W1H: どうやって
+    satisfies_5w1h: has_who and has_what and has_when and has_where and has_why and has_how
+    reviewed: Boolean
+}
+
+entity BranchReview {
+    job: Job
+}
+
+entity Concern {
+    job: Job
+    scope: ReviewScope                      -- どのレビュー由来の懸念か
+    posted_as_pr_comment: Boolean
+}
+
+rule StartRoughImplementation {
+    when: RunDefaultWorkflow(job)
+    requires: job.status = running
+    ensures: job.rough_impl_done = true
+}
+
+rule SplitIntoMinimalCommits {
+    when: CommitRecorded(job, has_who, has_what, has_when, has_where, has_why, has_how)
+    requires:
+        job.status = running
+        job.rough_impl_done = true
+    ensures:
+        Commit.created(
+            job: job
+            has_who: has_who
+            has_what: has_what
+            has_when: has_when
+            has_where: has_where
+            has_why: has_why
+            has_how: has_how
+            reviewed: false
+        )
+}
+
+rule CheckCi {
+    when: CiChecked(job, result)
+    requires:
+        job.status = running
+        job.commits.any()
+    ensures: job.ci_result = result
+}
+
+rule ReviewCommit {
+    when: CommitReviewed(commit)
+    requires:
+        commit.job.ci_result = passed
+        commit.reviewed = false
+    ensures: commit.reviewed = true
+}
+
+rule ReviewBranchDiff {
+    when: BranchDiffReviewed(job)
+    requires:
+        job.status = running
+        job.all_commits_reviewed = true
+    ensures:
+        BranchReview.created(job: job)
+}
+
+rule RaiseConcern {
+    when: ConcernFound(job, scope)
+    requires: job.status = running
+    ensures:
+        Concern.created(job: job, scope: scope, posted_as_pr_comment: false)
+}
+
+rule PostConcernAsPrComment {
+    when: PrCommentPosted(concern)
+    requires: concern.posted_as_pr_comment = false
+    ensures: concern.posted_as_pr_comment = true
+}
+
+rule CompleteWorkflow {
+    when: WorkflowSucceeded(job)
+    requires:
+        job.status = running
+        job.has_branch_review = true
+        job.all_commits_5w1h = true
+    ensures: job.status = succeeded
+}
+
+rule FailWorkflow {
+    when: WorkflowFailed(job)
+    requires: job.status = running
+    ensures: job.status = failed
+}
+
+invariant CommitsRequire5W1HOnSuccess {
+    for job in Jobs where status = succeeded:
+        job.all_commits_5w1h = true
+}
+
+invariant AllCommitsReviewedBeforeSuccess {
+    for job in Jobs where status = succeeded:
+        job.all_commits_reviewed = true
+}
+
+invariant BranchDiffReviewedBeforeSuccess {
+    for job in Jobs where status = succeeded:
+        job.has_branch_review = true
+}
+
+invariant ConcernsEventuallyPostedBeforeSuccess {
+    for job in Jobs where status = succeeded:
+        job.concerns.all(c => c.posted_as_pr_comment)
+}
+
+open question "デフォルトワークフロー定義の保存場所・適用方法 (createPr.ts のプロンプト生成ロジックに直接埋め込むか、独立したworkflow定義ファイルとして持ちcreatePr.tsから読み込むか) は未確定"

@@ -1,0 +1,88 @@
+specification {
+  element actor
+  element system
+  element component
+}
+
+model {
+  maintainer = actor 'メンテナ' {
+    description 'issue上でPR作成ジョブの実行をトリガーする。生成されたPRの指摘コメントを確認する'
+  }
+
+  webhook = system 'webhook' {
+    description 'GitHub Webhookを受けてジョブを実行するサーバー'
+
+    jobsRoute = component 'routes/jobs.ts' {
+      description 'POST /create-pr エンドポイント。既存のPR作成ジョブ (createPrJob) を起動する (変更なし)'
+    }
+
+    createPrJob = component 'jobs/createPr.ts' {
+      description 'runCreatePrJob(job, client, ref): source収集 -> clone -> claude cli実装 -> 安全性検証 -> commit -> push -> PR作成。デフォルトワークフローの各フェーズ (ラフ実装/コミット分割/CI確認/コミットレビュー/ブランチdiffレビュー/懸念のPRコメント化) をこの中に組み込む対象'
+    }
+
+    implementPrompt = component 'prompts/implement.ts' {
+      description 'buildImplementPrompt(ref, issueTitle): claude cliへの実装指示プロンプトを構築する。現状は「commitは行わない」指示のみで、デフォルトワークフローの手順 (ラフ実装優先 -> 複数回commit -> レビュー) は含まれていない'
+    }
+
+    defaultWorkflow = component 'デフォルトワークフロー定義 (保存場所未確定)' {
+      description 'Issueをまとめる -> Claudeに投げる -> 要件定義+テストのラフ作成 -> 最小コミット分割 -> CI -> コミットごとレビュー -> ブランチdiffレビュー -> 懸念をPRコメントに残す -> コミットメッセージに5W1H、の手順定義。implementPromptへの直接埋め込みか、独立したworkflow定義ファイルとして持ちcreatePrJobから読み込むかは未確定 (open question)'
+    }
+
+    gitOps = component 'git.ts' {
+      description 'prepareGitWorkspace/commitAll/push/cleanupWorkspaceを提供する。commitAllは現状 git add -A && git commit を1回実行するのみで複数コミット分割に対応していない (拡張対象)'
+    }
+
+    safety = component 'safety.ts' {
+      description 'assertSafeDiff(ws): 禁止パス (.github/workflows/ 等) への変更を機械的に検出する。既存のセーフティチェックは維持する (変更なし)'
+    }
+
+    jobsRoute -> createPrJob 'ジョブを実行'
+    createPrJob -> implementPrompt 'buildImplementPromptでclaude cliへの実装プロンプトを取得'
+    implementPrompt -> defaultWorkflow '手順定義を参照してプロンプトに反映 (保存場所は open question)'
+    createPrJob -> defaultWorkflow '手順定義を参照してコミット分割・CI確認・レビュー・懸念投稿の各フェーズを実行'
+    createPrJob -> gitOps 'prepareGitWorkspace / commitAll (拡張対象) / push / cleanupWorkspaceを呼ぶ'
+    createPrJob -> safety 'assertSafeDiffで差分の安全性を検証'
+  }
+
+  claudeCli = system 'Claude CLI' {
+    description 'runClaude()の実行環境。IMPLEMENT_TOOLS = ["Read","Write","Edit","Glob","Grep","Bash","TodoWrite"], permissionMode: "acceptEdits"。IMPLEMENT_DISALLOWED_TOOLSによりgit push/git remote/gh/curl/wgetを禁止。デフォルトワークフロー導入後もこの許可リストは維持する前提とする (レビュー・懸念抽出はcreatePrJob側でclaude cliの出力を解釈して行う)'
+  }
+
+  ci = system 'CI (外部・未連携)' {
+    description 'GitHub Actions等の外部CI。現状ジョブから起動・待機する仕組みは無い (アーキテクチャ上のギャップ)'
+  }
+
+  github = system 'GitHub' {
+    description 'Issue本文・コメント・PRの取得元/投稿先。createPrJobからgetIssue/listIssueComments/createPullRequestで参照・更新される。レビュー懸念を指摘コメントとして投稿する機能は現状無く、追加が必要になる可能性がある'
+  }
+
+  maintainer -> jobsRoute 'PR作成ジョブの実行をトリガーする (userscript経由、既存)'
+  createPrJob -> claudeCli 'IMPLEMENT_TOOLSでラフ実装 -> 複数回commitを依頼 (デフォルトワークフロー導入時の変更対象)'
+  createPrJob -> ci 'CI通過を確認する想定だが、現状連携する仕組みは無い'
+  createPrJob -> github 'source収集、commit後のpush、PR作成、懸念の指摘コメント投稿'
+}
+
+views {
+  view index {
+    title '全体像'
+    include *
+  }
+
+  view of webhook {
+    title 'webhook内部構成 (デフォルトワークフローの組み込み対象)'
+    include *
+  }
+
+  dynamic view defaultWorkflowFlow {
+    title 'デフォルトワークフローの実行フロー'
+    jobsRoute -> createPrJob 'PR作成ジョブを起動'
+    createPrJob -> implementPrompt 'デフォルトワークフローの手順を含む実装プロンプトを構築'
+    implementPrompt -> claudeCli 'ラフ実装 -> テストが通る状態を依頼'
+    createPrJob -> gitOps '最小限のコミットに分割してcommit (拡張対象)'
+    createPrJob -> ci 'CI通過を確認する想定 (現状は未連携)'
+    createPrJob -> claudeCli 'コミットごとのレビューを依頼 (拡張対象)'
+    createPrJob -> claudeCli 'ブランチdiff全体のレビューを依頼 (拡張対象)'
+    createPrJob -> github '懸念をPRの指摘コメントとして投稿 (拡張対象)'
+    createPrJob -> github 'PRを作成'
+  }
+}

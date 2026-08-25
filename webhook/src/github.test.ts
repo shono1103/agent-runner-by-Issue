@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Octokit } from "@octokit/rest";
-import { findIssueForPr, findOpenPrForIssue, type GithubClient } from "./github.ts";
+import { createPrComment, findIssueForPr, findOpenPrForIssue, type GithubClient } from "./github.ts";
 
 type FakePr = {
   number: number;
@@ -103,4 +103,20 @@ test("findIssueForPr: どちらの手がかりも無い場合は null を返す"
   const result = await findIssueForPr(client, "o", "r", 32);
 
   assert.equal(result, null);
+});
+
+test("createPrComment: issues.createComment をPR番号をissue_numberとして呼ぶ", async () => {
+  const calls: unknown[] = [];
+  const createComment = async (params: unknown) => {
+    calls.push(params);
+    return { data: {} };
+  };
+  const octokit = { rest: { issues: { createComment } } } as unknown as Octokit;
+  const client: GithubClient = { octokit, selfLogin: "agent-runner-bot" };
+
+  await createPrComment(client, { owner: "o", repo: "r", issueNumber: 3 }, 42, "懸念があります");
+
+  assert.deepEqual(calls, [
+    { owner: "o", repo: "r", issue_number: 42, body: "懸念があります" },
+  ]);
 });
